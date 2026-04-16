@@ -1,0 +1,175 @@
+---
+title: "Docker Compose setup for PostgreSQL databases"
+description: "Run all three PostgreSQL databases for the inventory system using Docker Compose, with auto-initialization SQL scripts and persistent named volumes."
+---
+
+Sistema de Gestión de Inventario uses a single Docker Compose file to spin up all three PostgreSQL 16 database containers required by the microservices. This page explains the Compose configuration, how initialization scripts are mounted, how data is persisted with named volumes, and the commands you need to manage the stack.
+
+<Note>
+The Compose file lives in the `docker/` subdirectory of the repository. Run all commands from that directory, or pass `-f docker/docker-compose.yml` when running from the project root.
+</Note>
+
+---
+
+## docker-compose.yml
+
+```yaml
+version: '3.8'
+name: sistema-inventario-db
+services:
+  db-products:
+    image: postgres:16-alpine
+    container_name: db-products
+    environment:
+      - POSTGRES_DB=product_db
+      - POSTGRES_USER=adminUser
+      - POSTGRES_PASSWORD=admin
+    ports:
+      - "5435:5432"
+    volumes:
+      - ./product_init.sql:/docker-entrypoint-initdb.d/init.sql
+      - products_data:/var/lib/postgresql/data
+
+  db-inventory:
+    image: postgres:16-alpine
+    container_name: db-inventory
+    environment:
+      - POSTGRES_DB=inventory_db
+      - POSTGRES_USER=adminUser
+      - POSTGRES_PASSWORD=admin
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./inventory_init.sql:/docker-entrypoint-initdb.d/init.sql
+      - inventory_data:/var/lib/postgresql/data
+
+  db-purchase:
+    image: postgres:16-alpine
+    container_name: db-purchase
+    environment:
+      - POSTGRES_DB=purchase_db
+      - POSTGRES_USER=adminUser
+      - POSTGRES_PASSWORD=admin
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./purchase_init.sql:/docker-entrypoint-initdb.d/init.sql
+      - purchase_data:/var/lib/postgresql/data
+
+volumes:
+  products_data:
+  inventory_data:
+  purchase_data:
+```
+
+---
+
+## Services
+
+<CardGroup cols={2}>
+  <Card title="db-products" icon="box">
+    **Database:** `product_db`  
+    **Host port:** `5435` → container port `5432`  
+    **Init script:** `product_init.sql`  
+    **Volume:** `products_data`  
+    Stores suppliers, categories, and the 100-item product catalog.
+  </Card>
+  <Card title="db-inventory" icon="warehouse">
+    **Database:** `inventory_db`  
+    **Host port:** `5433` → container port `5432`  
+    **Init script:** `inventory_init.sql`  
+    **Volume:** `inventory_data`  
+    Stores stock levels, goods receipts, and the movement ledger.
+  </Card>
+  <Card title="db-purchase" icon="file-invoice">
+    **Database:** `purchase_db`  
+    **Host port:** `5434` → container port `5432`  
+    **Init script:** `purchase_init.sql`  
+    **Volume:** `purchase_data`  
+    Stores purchase orders and their line items.
+  </Card>
+  <Card title="Named volumes" icon="database">
+    `products_data`, `inventory_data`, and `purchase_data` are Docker-managed named volumes. Data survives `docker compose down` and is only removed with `docker compose down -v`.
+  </Card>
+</CardGroup>
+
+---
+
+## Initialization scripts
+
+Each service mounts its SQL file into the PostgreSQL image's `/docker-entrypoint-initdb.d/` directory:
+
+```yaml
+volumes:
+  - ./product_init.sql:/docker-entrypoint-initdb.d/init.sql
+```
+
+PostgreSQL executes every `.sql` file in that directory **once**, the first time the container starts against an empty data volume. The scripts:
+
+1. Drop and recreate all tables (idempotent for development resets).
+2. Create indexes and triggers.
+3. Insert seed data (categories, suppliers, products, stock entries, and sample purchase orders).
+
+<Note>
+If the named volume already contains data from a previous run, the init scripts are **not** re-executed. To re-apply them, remove the volumes first with `docker compose down -v`.
+</Note>
+
+---
+
+## Managing the stack
+
+<Steps>
+  <Step title="Start all three databases">
+    Run the following from the `docker/` directory to start the containers in detached mode:
+
+    ```bash
+    docker compose up -d
+    ```
+  </Step>
+  <Step title="Verify the containers are running">
+    ```bash
+    docker compose ps
+    ```
+
+    You should see `db-products`, `db-inventory`, and `db-purchase` listed with status `running`.
+  </Step>
+  <Step title="Stop the containers (preserve data)">
+    ```bash
+    docker compose down
+    ```
+
+    This stops and removes the containers but leaves the named volumes intact. Data is preserved for the next `up`.
+  </Step>
+  <Step title="Stop and wipe all data">
+    ```bash
+    docker compose down -v
+    ```
+
+    The `-v` flag removes the named volumes. The next `up` will re-run the init scripts and restore the seed data.
+  </Step>
+</Steps>
+
+---
+
+## Connecting to a database
+
+Use any PostgreSQL client. Example using `psql`:
+
+```bash
+# Connect to product_db
+psql -h localhost -p 5435 -U adminUser -d product_db
+
+# Connect to inventory_db
+psql -h localhost -p 5433 -U adminUser -d inventory_db
+
+# Connect to purchase_db
+psql -h localhost -p 5434 -U adminUser -d purchase_db
+```
+
+---
+
+## Credentials
+
+<Warning>
+All three services use the same default credentials (`adminUser` / `admin`) defined for local development convenience. **Never use these credentials in a staging or production environment.** Replace them with strong, unique passwords managed through environment variable injection or a secrets manager before deploying outside of a local machine.
+</Warning>

@@ -1,0 +1,100 @@
+---
+title: "Set up the local development environment"
+description: "Clone the repository, start the three PostgreSQL databases with Docker Compose, and verify the seed data is loaded across all schemas before starting services."
+---
+
+This page walks you through the first-time setup for **Sistema de Gestión de Inventario**. By the end you will have the repository cloned and all three PostgreSQL databases running in Docker with their seed data pre-loaded—ready for the microservices to connect.
+
+Make sure you have completed the [prerequisites](/getting-started/prerequisites) before continuing.
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the project from GitHub and change into the root directory:
+
+    ```bash
+    git clone https://github.com/leandro12rk/SistemaDeGestionDeInventario.git
+    cd SistemaDeGestionDeInventario
+    ```
+  </Step>
+
+  <Step title="Start the PostgreSQL databases">
+    All three databases are defined in a single Compose file inside the `docker/` directory. Start them in detached mode:
+
+    ```bash
+    docker compose -f docker/docker-compose.yml up -d
+    ```
+
+    This command pulls `postgres:16-alpine` (if not already cached) and starts the following containers:
+
+    | Container | Database | Host port |
+    |-----------|----------|-----------|
+    | `db-products` | `product_db` | `5435` |
+    | `db-inventory` | `inventory_db` | `5433` |
+    | `db-purchase` | `purchase_db` | `5434` |
+
+    Each container mounts its corresponding `*_init.sql` file into `/docker-entrypoint-initdb.d/`, so the schema and seed data are applied automatically on first start.
+
+    <Note>
+      The credentials used by all three containers are `POSTGRES_USER=adminUser` and `POSTGRES_PASSWORD=admin`. These are **development-only defaults** and should never be used in a production or shared environment.
+    </Note>
+  </Step>
+
+  <Step title="Verify the containers are running">
+    Confirm all three containers reached the `healthy` state:
+
+    ```bash
+    docker compose -f docker/docker-compose.yml ps
+    ```
+
+    Expected output (abbreviated):
+
+    ```
+    NAME            STATUS
+    db-products     Up (healthy)
+    db-inventory    Up (healthy)
+    db-purchase     Up (healthy)
+    ```
+
+    If a container shows `Exiting` or `Restarting`, check its logs:
+
+    ```bash
+    docker logs db-products
+    ```
+  </Step>
+
+  <Step title="Verify seed data">
+    Connect to the products database and confirm the seed data was applied. You can use `psql` directly through Docker:
+
+    ```bash
+    docker exec -it db-products psql -U adminUser -d product_db
+    ```
+
+    Then run a quick count query:
+
+    ```sql
+    SELECT
+      (SELECT COUNT(*) FROM products)    AS products,
+      (SELECT COUNT(*) FROM categories)  AS categories,
+      (SELECT COUNT(*) FROM suppliers)   AS suppliers;
+    ```
+
+    Expected result:
+
+    ```
+     products | categories | suppliers
+    ----------+------------+-----------
+          100 |         10 |        10
+    (1 row)
+    ```
+
+    The init script seeds **100 products** across **10 categories** (Laptops, Monitores, Almacenamiento, Componentes, Periféricos, Redes, Impresión, Servidores, Software, Accesorios) supplied by **10 vendors** based in Panama.
+
+    Exit `psql` when done:
+
+    ```sql
+    \q
+    ```
+  </Step>
+</Steps>
+
+With the databases running and seed data confirmed, you are ready to [start the microservices](/getting-started/running-services).

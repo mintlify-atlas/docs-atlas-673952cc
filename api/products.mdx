@@ -1,0 +1,423 @@
+---
+title: "Products API — catalog management endpoints"
+description: "REST endpoints for creating, reading, updating, and deleting products, with multi-field filtering and dashboard statistics aggregation."
+keywords: ["products", "inventory", "catalog", "SKU", "dashboard", "Spring Boot", "REST API"]
+---
+
+The Products API is the core of the Sistema de Gestión de Inventario. It manages the full product catalog — each product carries a unique SKU, belongs to a category and supplier, and exposes pricing data used by downstream services. The service runs on port **9090**, so all paths below are relative to `http://localhost:9090`.
+
+<Note>
+  Every product must reference an existing category and supplier by their database IDs. Create those resources first if they do not yet exist.
+</Note>
+
+---
+
+## Endpoints
+
+### GET /products
+
+List all products. Supports multi-field filtering via query parameters. Returns a projection that includes resolved category and supplier names rather than full nested objects.
+
+#### Query parameters
+
+<ParamField query="productName" type="string">
+  Filter by partial product name match (case-insensitive).
+</ParamField>
+
+<ParamField query="sku" type="string">
+  Filter by exact or partial SKU value.
+</ParamField>
+
+<ParamField query="categoryName" type="string">
+  Filter by category name (e.g., `Laptops`, `Monitores`, `Redes`, `Almacenamiento`).
+</ParamField>
+
+<ParamField query="supplierName" type="string">
+  Filter by supplier company name.
+</ParamField>
+
+<ParamField query="status" type="boolean">
+  Filter by active (`true`) or inactive (`false`) status.
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="id" type="number">
+  Auto-generated product ID.
+</ResponseField>
+
+<ResponseField name="sku" type="string">
+  Unique product SKU. Pattern: `^[A-Z0-9-]+$`.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Product display name (3–100 characters).
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Full product description.
+</ResponseField>
+
+<ResponseField name="price" type="number">
+  Unit price. Must be a positive number.
+</ResponseField>
+
+<ResponseField name="categoryName" type="string">
+  Name of the associated category (resolved from the category relation).
+</ResponseField>
+
+<ResponseField name="categoryId" type="number">
+  ID of the associated category.
+</ResponseField>
+
+<ResponseField name="supplierName" type="string">
+  Company name of the associated supplier (resolved from the supplier relation).
+</ResponseField>
+
+<ResponseField name="supplierId" type="number">
+  ID of the associated supplier.
+</ResponseField>
+
+<ResponseField name="status" type="boolean">
+  `true` if the product is active.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO-8601 timestamp of record creation. Read-only.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="string">
+  ISO-8601 timestamp of the last update. Read-only.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url "http://localhost:9090/products?categoryName=Laptops&status=true"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    [
+      {
+        "id": 1,
+        "sku": "LAP-DELL-001",
+        "name": "Dell Latitude 5520",
+        "description": "Laptop empresarial de 15 pulgadas con procesador Intel Core i7",
+        "price": 1299.99,
+        "categoryName": "Laptops",
+        "categoryId": 1,
+        "supplierName": "Tech Solutions Panama",
+        "supplierId": 2,
+        "status": true,
+        "createdAt": "2024-01-15T10:30:00",
+        "updatedAt": "2024-03-20T14:15:00"
+      }
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /products/\{productId\}/name
+
+Return the product name for a given ID. This is a lightweight projection endpoint—useful when only the name is needed without fetching the full product record.
+
+#### Path parameters
+
+<ParamField path="productId" type="number" required>
+  The ID of the product.
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="name" type="string">
+  The product's display name.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url "http://localhost:9090/products/1/name"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "name": "Dell Latitude 5520"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /products/dashboard
+
+Return aggregated statistics for the inventory dashboard: global totals plus breakdowns by category and by supplier.
+
+#### Response fields
+
+<ResponseField name="productsStats" type="object">
+  Global inventory statistics.
+  <Expandable title="properties">
+    <ResponseField name="totalProductPrice" type="number">
+      Sum of prices across all products.
+    </ResponseField>
+    <ResponseField name="totalcountProduct" type="number">
+      Total number of products in the catalog.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="productsByCategory" type="object[]">
+  Product count grouped by category.
+  <Expandable title="properties">
+    <ResponseField name="name" type="string">
+      Category name.
+    </ResponseField>
+    <ResponseField name="productCount" type="number">
+      Number of products in this category.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="productBySupplier" type="object[]">
+  Product count grouped by supplier.
+  <Expandable title="properties">
+    <ResponseField name="companyName" type="string">
+      Supplier company name.
+    </ResponseField>
+    <ResponseField name="productCount" type="number">
+      Number of products from this supplier.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url "http://localhost:9090/products/dashboard"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "productsStats": {
+        "totalProductPrice": 48750.50,
+        "totalcountProduct": 42
+      },
+      "productsByCategory": [
+        { "name": "Laptops", "productCount": 15 },
+        { "name": "Monitores", "productCount": 10 },
+        { "name": "Redes", "productCount": 9 },
+        { "name": "Almacenamiento", "productCount": 8 }
+      ],
+      "productBySupplier": [
+        { "companyName": "Tech Solutions Panama", "productCount": 20 },
+        { "companyName": "Distribuidora Regional", "productCount": 22 }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /products
+
+Create a new product. The `sku` must be unique across the catalog. The `category_id` and `supplier` fields must reference existing records.
+
+#### Request body
+
+<ParamField body="sku" type="string" required>
+  Unique product SKU. Only uppercase letters, digits, and hyphens are allowed (`^[A-Z0-9-]+$`).
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Product name. Between 3 and 100 characters.
+</ParamField>
+
+<ParamField body="description" type="string" required>
+  Product description. Cannot be blank.
+</ParamField>
+
+<ParamField body="price" type="number" required>
+  Unit price. Must be a positive number.
+</ParamField>
+
+<ParamField body="category_id" type="object" required>
+  Category reference. Provide an object with the category `id`.
+</ParamField>
+
+<ParamField body="supplier" type="object" required>
+  Supplier reference. Provide an object with the supplier `id`.
+</ParamField>
+
+<ParamField body="status" type="boolean" required>
+  Set to `true` to mark the product as active.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request POST \
+      --url "http://localhost:9090/products" \
+      --header "Content-Type: application/json" \
+      --data '{
+        "sku": "MON-LG-27",
+        "name": "LG UltraWide 27\"",
+        "description": "Monitor curvo UltraWide 2560x1080 con panel IPS",
+        "price": 449.99,
+        "category_id": { "id": 2 },
+        "supplier": { "id": 1 },
+        "status": true
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 201
+    {
+      "id": 43,
+      "sku": "MON-LG-27",
+      "name": "LG UltraWide 27\"",
+      "description": "Monitor curvo UltraWide 2560x1080 con panel IPS",
+      "price": 449.99,
+      "category_id": { "id": 2, "name": "Monitores", "description": "Pantallas y monitores", "status": true },
+      "supplier": { "id": 1, "companyName": "Tech Solutions Panama" },
+      "status": true,
+      "createdAt": "2024-04-16T09:00:00",
+      "updatedAt": null
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /products/\{productId\}
+
+Update an existing product by ID. The full product body must be provided; partial updates are not supported.
+
+#### Path parameters
+
+<ParamField path="productId" type="number" required>
+  The ID of the product to update.
+</ParamField>
+
+#### Request body
+
+Same fields as [POST /products](#post-products).
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request PUT \
+      --url "http://localhost:9090/products/43" \
+      --header "Content-Type: application/json" \
+      --data '{
+        "sku": "MON-LG-27",
+        "name": "LG UltraWide 27\" (Reacondicionado)",
+        "description": "Monitor curvo UltraWide 2560x1080 con panel IPS — unidad reacondicionada",
+        "price": 329.99,
+        "category_id": { "id": 2 },
+        "supplier": { "id": 1 },
+        "status": true
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "id": 43,
+      "sku": "MON-LG-27",
+      "name": "LG UltraWide 27\" (Reacondicionado)",
+      "description": "Monitor curvo UltraWide 2560x1080 con panel IPS — unidad reacondicionada",
+      "price": 329.99,
+      "category_id": { "id": 2, "name": "Monitores" },
+      "supplier": { "id": 1, "companyName": "Tech Solutions Panama" },
+      "status": true,
+      "createdAt": "2024-04-16T09:00:00",
+      "updatedAt": "2024-04-16T11:45:00"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### DELETE /products/\{productId\}
+
+Delete a product by ID. Returns `204 No Content` on success.
+
+#### Path parameters
+
+<ParamField path="productId" type="number" required>
+  The ID of the product to delete.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request DELETE \
+      --url "http://localhost:9090/products/43"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```text 204
+    (no content)
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Error responses
+
+All errors are returned as an `ErrorDetails` JSON object from the global exception handler.
+
+<ResponseField name="timestamp" type="string">
+  ISO-8601 timestamp of when the error occurred.
+</ResponseField>
+
+<ResponseField name="statusCode" type="number">
+  HTTP status code (e.g., `404`, `400`, `500`).
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable error message.
+</ResponseField>
+
+<ResponseField name="errorCode" type="string">
+  Machine-readable error code. One of `PRODUCT_NOT_FOUND`, `INVALID_REQUEST_DATA`, `VALIDATION_ERROR`, or `INTERNAL_SERVER_ERROR`.
+</ResponseField>
+
+<CodeGroup>
+
+```json 404 Not Found
+{
+  "timestamp": "2024-04-16T09:15:32",
+  "statusCode": 404,
+  "message": "Product not found with id: 999",
+  "errorCode": "PRODUCT_NOT_FOUND"
+}
+```
+
+```json 400 Validation Error
+{
+  "timestamp": "2024-04-16T09:16:00",
+  "statusCode": 400,
+  "message": "Missing Product SKU",
+  "errorCode": "VALIDATION_ERROR"
+}
+```
+
+</CodeGroup>
+
+<Warning>
+  Deleting a product that is referenced by purchase orders in the purchase-service may cause referential integrity errors. Deactivate the product (`status: false`) instead of deleting it when orders exist.
+</Warning>

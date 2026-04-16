@@ -1,0 +1,164 @@
+---
+title: "Inventory Service: stock levels and movement tracking"
+description: "The Inventory Service tracks real-time product stock quantities, records goods receipts, and maintains a complete audit log of stock movements."
+---
+
+The Inventory Service is the stock ledger for the Sistema de Gestión de Inventario. It maintains the current quantity on hand for every product, records each goods receipt tied to a purchase order, and writes an immutable movement log so you can trace every unit that has ever entered or left the warehouse.
+
+## Service overview
+
+| Property | Value |
+|---|---|
+| Default port | `9091` |
+| Database | `db-inventory` (PostgreSQL, port `5433`) |
+| Spring application name | `inventory-service` |
+
+## Data model
+
+The schema consists of three tables that model stock state and history separately.
+
+### inventory
+
+The master stock table. One row per product, with the current quantity enforced non-negative by a `CHECK` constraint.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `SERIAL` | Primary key |
+| `product_id` | `INTEGER` | Unique — one stock record per product |
+| `quantity` | `INTEGER` | Current stock; must be ≥ 0 |
+| `last_updated` | `TIMESTAMP` | Updated on every stock change |
+
+### goods_receipts
+
+Records the arrival of a shipment linked to a purchase order. A single receipt can cover multiple products.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `SERIAL` | Primary key |
+| `purchase_order_id` | `INTEGER` | References the originating purchase order |
+| `received_date` | `TIMESTAMP` | Defaults to current timestamp |
+| `received_by` | `VARCHAR(100)` | Name of the person who received the goods |
+
+### stock_movements
+
+The full audit log (Kardex) of every quantity change. Each row records a single movement event.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `SERIAL` | Primary key |
+| `product_id` | `INTEGER` | The product affected |
+| `goods_receipt_id` | `INTEGER` | Optional FK → `goods_receipts(id)` |
+| `type` | `VARCHAR(10)` | `IN`, `OUT`, or `ADJUSTMENT` |
+| `amount` | `INTEGER` | Absolute quantity delta |
+| `reason` | `TEXT` | Free-text description of the movement |
+| `created_at` / `updated_at` | `TIMESTAMP` | Auto-managed |
+
+## Stock movement types
+
+The `type` column is enforced by a `CHECK` constraint to one of three values.
+
+<CardGroup cols={3}>
+  <Card title="IN" icon="arrow-down">
+    Goods entering the warehouse — for example, a received purchase order or an initial stock load.
+  </Card>
+  <Card title="OUT" icon="arrow-up">
+    Goods leaving the warehouse — for example, a direct sale or a transfer to a branch.
+  </Card>
+  <Card title="ADJUSTMENT" icon="sliders">
+    Corrections to reconcile physical counts with system records. The `amount` can be negative (e.g., `-1` for a damaged unit).
+  </Card>
+</CardGroup>
+
+```sql
+type VARCHAR(10) CHECK (type IN ('IN', 'OUT', 'ADJUSTMENT'))
+```
+
+## API endpoints
+
+### Inventory
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/inventory` | List all inventory records, enriched with product names |
+| `GET` | `/inventory/{productId}` | Get stock for a specific product |
+| `POST` | `/inventory` | Create a new inventory entry |
+| `PUT` | `/inventory` | Update an existing inventory entry |
+| `DELETE` | `/inventory` | Remove an inventory entry |
+
+### Goods receipts
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/goodReceipts` | List all goods receipts |
+| `GET` | `/goodReceipts/{id}` | Get a goods receipt by ID |
+| `POST` | `/goodReceipts` | Record a new goods receipt |
+| `PUT` | `/goodReceipts/{id}` | Update a goods receipt by ID |
+
+### Stock movements
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/stockMovements` | List the full movement history |
+| `GET` | `/stockMovements/{id}` | Get a stock movement by ID |
+| `POST` | `/stockMovements` | Record a new stock movement |
+| `PUT` | `/stockMovements` | Update a stock movement (ID in body) |
+| `DELETE` | `/stockMovements/{id}` | Delete a stock movement |
+
+## Feign client integration
+
+The Inventory Service calls the Product Service at query time to resolve product names. The `ProductClient` Feign interface targets the `product-service` Eureka service name, so no hardcoded URL is required.
+
+```java
+@FeignClient(name = "product-service")
+public interface ProductClient {
+    @GetMapping("/product/{productId}/name")
+    ProductDTO getProductName(@PathVariable("productId") Long productId);
+}
+```
+
+When `GET /inventory` is called, the controller iterates over every `InventoryModel` record and calls `productClient.getProductName(item.getProductId())` to enrich the response with the human-readable name. If the Product Service is unavailable for a given product, the response falls back to `"Nombre no disponible"` rather than failing the entire request.
+
+<Note>
+  The `product_id` column in the `inventory` table has a `UNIQUE` constraint, enforcing a one-to-one relationship between a product and its stock record. Attempting to insert a duplicate `product_id` will return a database error.
+</Note>
+
+## Seed data
+
+The Docker initialization script seeds a representative starting state.
+
+```sql
+-- Initial stock levels
+INSERT INTO inventory (product_id, quantity)
+VALUES (1, 15),   -- MacBook Air M2
+       (2, 8),    -- Dell XPS 13
+       (11, 20),  -- LG 27" 4K Monitor
+       (21, 50),  -- Samsung 980 Pro 1TB
+       (31, 12),  -- AMD Ryzen 7 7800X3D
+       (41, 30),  -- Logitech G Pro X Superlight
+       (51, 25),  -- TP-Link Archer AX55
+       (61, 10),  -- Epson EcoTank L3210
+       (71, 3),   -- Dell PowerEdge R750
+       (81, 100); -- Windows 11 Pro OEM
+```
+
+Three goods receipts are seeded (linked to purchase orders 1 and 4), along with six stock movement entries covering `IN`, `OUT`, and `ADJUSTMENT` scenarios.
+
+## Running the service
+
+```bash
+mvn spring-boot:run
+```
+
+Required environment variables:
+
+The `application.properties` for this service is pre-configured with these default connection values:
+
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5433/inventory_db
+spring.datasource.username=adminUser
+spring.datasource.password=admin
+```
+
+<Warning>
+  The Inventory Service depends on the Product Service being reachable via Eureka for name enrichment. Start the Eureka Server and Product Service before starting this service, or product name lookups will fall back to the default placeholder.
+</Warning>

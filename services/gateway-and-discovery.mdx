@@ -1,0 +1,116 @@
+---
+title: "Gateway and service discovery with Eureka"
+description: "Spring Cloud Gateway routes all requests to microservices discovered through Netflix Eureka, removing hardcoded service addresses from the system."
+---
+
+The Sistema de Gestión de Inventario uses Netflix Eureka for service registration and Spring Cloud Gateway as the single entry point for all HTTP traffic. Together, they let every service locate every other service by logical name, with no hardcoded host-and-port references anywhere in the codebase.
+
+## Eureka Server
+
+The Eureka Server is the service registry. Every other service in the system registers with it on startup and periodically renews its lease, making its current network location available to any other registered client.
+
+| Property | Value |
+|---|---|
+| Port | `8761` |
+| Spring application name | `eureka-server` |
+| Dashboard | `http://localhost:8761` |
+
+The server is configured **not** to register itself with its own registry:
+
+```properties
+eureka.client.register-with-eureka=false
+eureka.client.fetch-registry=false
+```
+
+Visit `http://localhost:8761` in a browser to see all currently registered instances, their status, and last heartbeat time.
+
+## Gateway Service
+
+The Gateway Service is the single entry point for external traffic. It registers with Eureka as a client and uses the registry to resolve service addresses dynamically via load-balanced URIs (`lb://service-name`).
+
+| Property | Value |
+|---|---|
+| Port | `9000` |
+| Spring application name | `gateway-service` |
+| Discovery locator | Enabled (lower-case service IDs) |
+
+### Route configuration
+
+Routes are defined in `application.properties`. The gateway strips the version prefix before forwarding the request to the downstream service.
+
+```properties
+# Dynamic discovery — auto-creates routes like /product-service/**
+spring.cloud.gateway.discovery.locator.enabled=true
+spring.cloud.gateway.discovery.locator.lower-case-service-id=true
+
+# Product Service route
+spring.cloud.gateway.routes[0].id=product-route
+spring.cloud.gateway.routes[0].uri=lb://product-service
+spring.cloud.gateway.routes[0].predicates[0]=Path=/api/v01/products/**
+spring.cloud.gateway.routes[0].filters[0]=StripPrefix=2
+
+# Inventory Service route
+spring.cloud.gateway.routes[1].id=inventory-route
+spring.cloud.gateway.routes[1].uri=lb://inventory-service
+spring.cloud.gateway.routes[1].predicates[0]=Path=/api/v01/inventory/**
+spring.cloud.gateway.routes[1].filters[0]=StripPrefix=3
+```
+
+### Reaching services through the gateway vs. directly
+
+<CardGroup cols={2}>
+  <Card title="Via gateway" icon="globe">
+    All traffic enters through port `9000`. The gateway prefix and `StripPrefix` filter determine what path reaches the microservice.
+
+    ```
+    GET http://localhost:9000/api/v01/products
+    → product-service /products
+    ```
+  </Card>
+  <Card title="Directly" icon="server">
+    Each service also accepts direct connections on its own port. Useful during local development.
+
+    ```
+    GET http://localhost:9090/products
+    GET http://localhost:9091/inventory
+    GET http://localhost:9092/purchase-orders
+    ```
+  </Card>
+</CardGroup>
+
+## Service registration flow
+
+<Steps>
+  <Step title="Start Eureka Server">
+    The registry starts on port `8761`. No other services are registered yet. The dashboard at `http://localhost:8761` shows an empty instance list.
+  </Step>
+  <Step title="Start microservices">
+    Each of Product Service, Inventory Service, and Purchase Service connects to `http://localhost:8761/eureka/` and registers under its `spring.application.name`. The dashboard shows all three instances as `UP`.
+  </Step>
+  <Step title="Start Gateway Service">
+    The gateway registers with Eureka and fetches the current registry. It can now resolve `lb://product-service`, `lb://inventory-service`, and `lb://purchase-service` to actual IP addresses.
+  </Step>
+  <Step title="Feign clients discover services">
+    Inter-service Feign calls (e.g., Inventory Service → Product Service) use the same Eureka registry to resolve addresses, without any gateway involvement.
+  </Step>
+</Steps>
+
+<Warning>
+  Eureka Server must be fully started before any other service attempts to register. If a microservice starts before Eureka is ready, it will retry registration automatically, but there will be a delay before it appears in the registry and becomes discoverable.
+</Warning>
+
+## Registered service names
+
+All services use `eureka.instance.prefer-ip-address=true` so Eureka stores the IP address rather than the hostname. The logical names used for routing are set by `spring.application.name` in each service.
+
+| Service | Application name | Default port |
+|---|---|---|
+| Eureka Server | `eureka-server` | `8761` |
+| Gateway Service | `gateway-service` | `9000` |
+| Product Service | `product-service` | `9090` |
+| Inventory Service | `inventory-service` | `9091` |
+| Purchase Service | `purchase-service` | `9092` |
+
+<Info>
+  The discovery locator (`spring.cloud.gateway.discovery.locator.enabled=true`) automatically creates additional routes prefixed with the lowercase service name (e.g., `/product-service/**`), in addition to the manually configured routes. This is useful for reaching any endpoint on a service without an explicit route definition.
+</Info>

@@ -1,0 +1,192 @@
+---
+title: "Product Service: catalog, categories, and suppliers"
+description: "The Product Service manages the master data for the inventory system: product catalog, categories, and suppliers, all stored in a dedicated PostgreSQL schema."
+---
+
+The Product Service is the master data hub of the Sistema de Gestión de Inventario. It owns the authoritative records for every product in the catalog, the categories those products belong to, and the suppliers who provide them. All other services that need product or supplier names call this service directly via Feign clients.
+
+## Service overview
+
+| Property | Value |
+|---|---|
+| Default port | `9090` |
+| Database | `db-products` (PostgreSQL, port `5435`) |
+| Swagger UI | `http://localhost:9090/docs` |
+
+## Data model
+
+The service manages three related entities in a single PostgreSQL schema.
+
+### Products
+
+The `products` table is the core of the catalog. Each row represents a distinct product SKU.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `SERIAL` | Primary key |
+| `sku` | `VARCHAR(20)` | Unique, uppercase alphanumeric + hyphens |
+| `name` | `VARCHAR(100)` | Required |
+| `description` | `TEXT` | Required |
+| `price` | `NUMERIC(10,2)` | Must be ≥ 0 |
+| `category_id` | `INTEGER` | FK → `categories(id)` |
+| `supplier_id` | `INTEGER` | FK → `suppliers(id)` |
+| `status` | `BOOLEAN` | `true` = active |
+| `created_at` | `TIMESTAMP` | Set on insert |
+| `updated_at` | `TIMESTAMP` | Maintained by trigger |
+
+Indexes on `category_id` and `supplier_id` are created automatically to speed up JOIN queries. A PostgreSQL trigger keeps `updated_at` current on every row update.
+
+### Categories
+
+The `categories` table classifies products into logical groups.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `SERIAL` | Primary key |
+| `name` | `VARCHAR(50)` | Unique |
+| `description` | `TEXT` | — |
+| `status` | `BOOLEAN` | `true` = active |
+| `created_at` / `updated_at` | `TIMESTAMP` | Auto-managed |
+
+### Suppliers
+
+The `suppliers` table stores vendor contact and location data.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `SERIAL` | Primary key |
+| `company_name` | `VARCHAR(150)` | Required |
+| `contact_name` | `VARCHAR(100)` | — |
+| `email` | `VARCHAR(100)` | Validated format |
+| `phone` | `VARCHAR(20)` | — |
+| `address` | `TEXT` | — |
+| `city` / `country` | `VARCHAR(100)` | — |
+| `status` | `BOOLEAN` | `true` = active |
+| `created_at` / `updated_at` | `TIMESTAMP` | Auto-managed |
+
+## Seed data
+
+The Docker initialization script pre-populates the database with realistic data for development and testing.
+
+<CardGroup cols={2}>
+  <Card title="10 categories" icon="tag">
+    Laptops, Monitores, Almacenamiento, Componentes, Periféricos, Redes, Impresión, Servidores, Software, Accesorios
+  </Card>
+  <Card title="10 suppliers" icon="building">
+    Intcomex Panamá, Solutek Panamá, Dell Technologies, HP Inc Panamá, Logitech Latam, Kingston Technology, Cisco Systems PA, Microsoft Panamá, Samsung Electronics, TP-Link Panamá
+  </Card>
+  <Card title="100 products" icon="box">
+    10 products per category, each with a unique SKU, realistic price, and references to category and supplier
+  </Card>
+  <Card title="Triggers" icon="bolt">
+    A shared PL/pgSQL function auto-updates `updated_at` on all three tables whenever a row changes
+  </Card>
+</CardGroup>
+
+## API endpoints
+
+### Products
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/products` | List products with optional filters |
+| `POST` | `/products` | Create a new product |
+| `PUT` | `/products/{id}` | Update a product by ID |
+| `DELETE` | `/products/{id}` | Delete a product by ID |
+| `GET` | `/products/{id}/name` | Return product name projection (used by Feign clients) |
+| `GET` | `/products/dashboard` | Return aggregated stats |
+
+### Suppliers
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/supplier` | List all suppliers |
+| `GET` | `/supplier/{id}` | Get supplier by ID |
+| `GET` | `/supplier/{id}/name` | Return supplier company name (used by Feign clients) |
+| `POST` | `/supplier` | Create a new supplier |
+| `PUT` | `/supplier/{id}` | Update a supplier by ID |
+| `DELETE` | `/supplier/{id}` | Delete a supplier by ID |
+
+### Categories
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/category` | List all categories |
+| `GET` | `/category/{id}` | Get category by ID |
+| `POST` | `/category` | Create a new category |
+| `PUT` | `/category/{id}` | Update a category by ID |
+| `DELETE` | `/category/{id}` | Delete a category by ID |
+
+## Dashboard endpoint
+
+`GET /products/dashboard` returns a single JSON object with three sections.
+
+```json
+{
+  "productsStats": {
+    "totalProducts": 100,
+    "activeProducts": 100
+  },
+  "productsByCategory": [
+    { "categoryName": "Laptops", "productCount": 10 }
+  ],
+  "productBySupplier": [
+    { "supplierName": "Intcomex Panamá", "productCount": 22 }
+  ]
+}
+```
+
+The response type is `DashboardStatsDTO`, which aggregates a `ProductStatsDTO` for global counts, a list of `CategoryStatsDTO` entries, and a list of `SupplierStatsDTO` entries.
+
+## Dynamic filtering with JPA Specifications
+
+`GET /products` accepts query parameters that are bound to `ProductFilterDTO` via `@ModelAttribute`. Filtering is applied dynamically using JPA Specifications, so any combination of parameters works without additional query methods.
+
+| Parameter | Matches on |
+|---|---|
+| `productName` | Partial, case-insensitive `name` |
+| `sku` | Partial, case-insensitive `sku` |
+| `categoryName` | Category `name` via JOIN |
+| `supplierName` | Supplier `company_name` via JOIN |
+| `status` | Exact `boolean` match |
+
+Example request:
+
+```bash
+GET /products?categoryName=Laptops&status=true
+```
+
+## Feign client integration
+
+Other services resolve product and supplier names by calling this service through OpenFeign. The Product Service exposes two lightweight projection endpoints for this purpose.
+
+<CardGroup cols={2}>
+  <Card title="Product name lookup" icon="magnifying-glass">
+    `GET /products/{productId}/name` — returns a `ProductNameProjection` with just the `name` field. Used by the Inventory Service.
+  </Card>
+  <Card title="Supplier name lookup" icon="magnifying-glass">
+    `GET /supplier/{supplierId}/name` — returns a `SupplierNameProjection` with the `companyName` field. Used by the Purchase Service.
+  </Card>
+</CardGroup>
+
+<Note>
+  Both Feign clients in the Purchase Service declare `contextId` values (`supplierClient` and `productClient`) to avoid bean name conflicts, since both target the same `product-service` Feign client name.
+</Note>
+
+## Running the service
+
+Make sure the `db-products` PostgreSQL container is running before starting the service.
+
+```bash
+mvn spring-boot:run
+```
+
+Required environment variables (or `application.properties` entries):
+
+The `application.properties` for this service is pre-configured with these default connection values:
+
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5435/product_db
+spring.datasource.username=adminUser
+spring.datasource.password=admin
+```

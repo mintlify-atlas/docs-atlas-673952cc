@@ -1,0 +1,154 @@
+---
+title: "Purchase Service: order orchestration across services"
+description: "The Purchase Service manages purchase orders and line items, using OpenFeign to enrich responses with supplier and product names from the Product Service."
+---
+
+The Purchase Service handles the procurement workflow for the Sistema de Gestión de Inventario. It stores purchase orders and their line items in a dedicated PostgreSQL schema, and it uses OpenFeign to pull human-readable supplier and product names from the Product Service at query time — keeping its own schema free of denormalized data.
+
+## Service overview
+
+| Property | Value |
+|---|---|
+| Default port | `9092` |
+| Database | `db-purchase` (PostgreSQL, port `5434`) |
+| Spring application name | `purchase-service` |
+
+## Data model
+
+Two tables with a cascade relationship model orders and their contents.
+
+### purchase_orders
+
+Each row represents a single purchase order issued to a supplier.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `SERIAL` | Primary key |
+| `order_code` | `VARCHAR(20)` | Unique business key, e.g. `OC-2026-001` |
+| `supplier_id` | `INTEGER` | References the supplier in the Product Service |
+| `order_date` | `TIMESTAMP` | Defaults to current timestamp |
+| `status` | `VARCHAR(20)` | `PENDING`, `APPROVED`, `RECEIVED`, or `CANCELLED` |
+| `total_amount` | `NUMERIC(12,2)` | Stored aggregate of all line subtotals |
+
+### purchase_order_details
+
+Each row is one line item within an order.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `SERIAL` | Primary key |
+| `purchase_order_id` | `INTEGER` | FK → `purchase_orders(id)` ON DELETE CASCADE |
+| `product_id` | `INTEGER` | References the product in the Product Service |
+| `quantity_ordered` | `INTEGER` | Must be > 0 |
+| `unit_price` | `NUMERIC(10,2)` | Price at time of order |
+| `subtotal` | `NUMERIC(12,2)` | `GENERATED ALWAYS AS (quantity_ordered * unit_price) STORED` |
+
+<Note>
+  `subtotal` is a generated column — PostgreSQL computes and stores it automatically. You cannot insert or update it directly.
+</Note>
+
+Performance indexes are created on `supplier_id` (in `purchase_orders`) and `product_id` (in `purchase_order_details`) to speed up history queries.
+
+## Order status lifecycle
+
+A purchase order moves through a defined sequence of statuses.
+
+<Steps>
+  <Step title="PENDING">
+    The order has been created and is awaiting internal approval.
+  </Step>
+  <Step title="APPROVED">
+    The order has been authorized and sent to the supplier.
+  </Step>
+  <Step title="RECEIVED">
+    The goods have arrived and a goods receipt has been created in the Inventory Service.
+  </Step>
+</Steps>
+
+At any point before receiving, an order can transition to `CANCELLED`.
+
+```sql
+status VARCHAR(20) CHECK (status IN ('PENDING', 'APPROVED', 'RECEIVED', 'CANCELLED'))
+```
+
+## API endpoints
+
+### Purchase orders
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/purchase-orders` | List all orders, enriched with supplier names |
+
+### Purchase order details
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/purchase-order-details` | List all line items, enriched with product names |
+
+## Cross-service enrichment via Feign
+
+The Purchase Service declares two separate Feign clients, both targeting `product-service`. Each client is given a distinct `contextId` to prevent Spring from raising a bean name conflict.
+
+### SupplierClient
+
+Resolves a supplier's company name from the Product Service when listing purchase orders.
+
+```java
+@FeignClient(name = "product-service", contextId = "supplierClient")
+public interface SupplierClient {
+    @GetMapping("/supplier/{supplierId}/name")
+    SupplierDTO getSupplierCompanyName(@PathVariable("supplierId") Long productId);
+}
+```
+
+### ProductClient
+
+Resolves a product's name from the Product Service when listing order details.
+
+```java
+@FeignClient(name = "product-service", contextId = "productClient")
+public interface ProductClient {
+    @GetMapping("/product/{productId}/name")
+    ProductDTO getProductName(@PathVariable("productId") Long productId);
+}
+```
+
+When `GET /purchase-orders` is called, the controller iterates over the list and enriches each entry with the supplier name. If the Product Service is unreachable, the value falls back to `"Nombre no disponible"` rather than failing the request.
+
+## Seed data
+
+The Docker initialization script inserts four purchase orders covering different statuses, and one line item per order.
+
+```sql
+INSERT INTO purchase_orders (order_code, supplier_id, status, total_amount)
+VALUES ('OC-2026-001', 1, 'RECEIVED', 5495.00),   -- Intcomex Panamá
+       ('OC-2026-002', 3, 'APPROVED', 12500.00),   -- Dell Technologies
+       ('OC-2026-003', 10, 'PENDING', 550.00),     -- TP-Link Panamá
+       ('OC-2026-004', 5, 'RECEIVED', 1250.00);    -- Logitech Latam
+
+INSERT INTO purchase_order_details (purchase_order_id, product_id, quantity_ordered, unit_price)
+VALUES (1, 1, 5, 1099.00),    -- 5 × MacBook Air M2
+       (2, 2, 10, 1250.00),   -- 10 × Dell XPS 13
+       (3, 51, 5, 110.00),    -- 5 × TP-Link Archer AX55
+       (4, 41, 10, 125.00);   -- 10 × Logitech G Pro X Superlight
+```
+
+## Running the service
+
+```bash
+mvn spring-boot:run
+```
+
+Required environment variables:
+
+The `application.properties` for this service is pre-configured with these default connection values:
+
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5434/purchase_db
+spring.datasource.username=adminUser
+spring.datasource.password=admin
+```
+
+<Warning>
+  The Purchase Service depends on the Product Service being reachable via Eureka to resolve supplier and product names. Start Eureka Server and Product Service first, otherwise name lookups fall back to placeholders.
+</Warning>

@@ -1,0 +1,69 @@
+---
+title: "Inventory Management System: Spring Boot microservices"
+description: "A distributed inventory management system built on Spring Boot and Spring Cloud. Control products, stock, and purchase orders across independent microservices."
+---
+
+Sistema de Gestión de Inventario is a full-stack microservices platform for managing product catalogs, real-time inventory stock, and purchase orders. Built on **Spring Boot 3.5** and **Spring Cloud**, it orchestrates multiple independent services behind a single API gateway — each with its own dedicated PostgreSQL database.
+
+<CardGroup cols={2}>
+  <Card title="Architecture overview" icon="sitemap" href="/architecture">
+    Understand the microservices topology, service registry, and inter-service communication patterns.
+  </Card>
+  <Card title="Get started" icon="rocket" href="/getting-started/prerequisites">
+    Set up your local environment and run all services in minutes using Docker Compose.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/products">
+    Explore the full REST API for products, inventory, and purchase orders.
+  </Card>
+  <Card title="Service guides" icon="server" href="/services/product-service">
+    Deep-dive into each microservice: what it manages, its data model, and how it communicates.
+  </Card>
+</CardGroup>
+
+## How it works
+
+The system is composed of five cooperating services, all registered with a Eureka service registry and reachable through a Spring Cloud Gateway:
+
+- **Product Service** (port `9090`) — manages the product catalog, categories, and suppliers
+- **Inventory Service** (port `9091`) — tracks real-time stock levels, goods receipts, and stock movements
+- **Purchase Service** (port `9092`) — orchestrates purchase orders and calls Product and Inventory Services via OpenFeign
+- **Gateway Service** — the single entry point that routes external requests to the correct upstream service
+- **Eureka Server** — the service discovery registry that all services register with on startup
+
+<Steps>
+  <Step title="Start the databases">
+    Run `docker compose up -d` from the `docker/` directory to spin up the three PostgreSQL instances with seed data.
+  </Step>
+  <Step title="Start the Eureka Server">
+    Launch `eureka-server` so services can register and discover each other.
+  </Step>
+  <Step title="Start the Gateway">
+    Launch `gateway-service` to open the public routing layer.
+  </Step>
+  <Step title="Start the microservices">
+    Launch `product-service`, `inventory-service`, and `purchase-service` in any order — they self-register with Eureka.
+  </Step>
+</Steps>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Database-per-service" icon="database">
+    Each microservice owns an isolated PostgreSQL schema, enabling independent scaling and deployment.
+  </Card>
+  <Card title="Service discovery" icon="network-wired">
+    Netflix Eureka provides dynamic service registration — no hardcoded IPs between services.
+  </Card>
+  <Card title="Declarative inter-service calls" icon="arrows-left-right">
+    OpenFeign clients in Purchase and Inventory services call Product Service endpoints with clean interface declarations.
+  </Card>
+  <Card title="Dynamic product filtering" icon="filter">
+    The Products API supports multi-field filtering via JPA Specifications: by name, SKU, category, supplier, and status.
+  </Card>
+  <Card title="Inventory dashboard" icon="chart-bar">
+    A single endpoint aggregates product totals, category breakdowns, and supplier statistics for dashboard views.
+  </Card>
+  <Card title="Seed data included" icon="seedling">
+    Docker init SQL scripts populate 10 categories, 10 suppliers, 100 products, and sample inventory and purchase records on first startup.
+  </Card>
+</CardGroup>

@@ -1,0 +1,79 @@
+---
+title: "Prerequisites for running the inventory system"
+description: "Software requirements and environment setup needed before running Sistema de Gestión de Inventario locally: JDK, Maven, Docker, and ports."
+---
+
+Before you can run **Sistema de Gestión de Inventario** on your local machine, you need a few tools installed and several network ports available. This page lists every requirement so you can confirm your environment is ready before cloning the repository or starting any services.
+
+## Required software
+
+<CardGroup cols={2}>
+  <Card title="JDK 25" icon="java">
+    The project targets **Java 25**. Install a JDK 25 distribution such as [Eclipse Temurin](https://adoptium.net/) or [Oracle JDK 25](https://www.oracle.com/java/technologies/downloads/). Verify your installation:
+
+    ```bash
+    java -version
+    ```
+
+    The output should report version `25` or higher.
+  </Card>
+  <Card title="Apache Maven 3.9+" icon="box">
+    All modules are built and run with Maven. Version **3.9 or later** is required. Check your version:
+
+    ```bash
+    mvn -version
+    ```
+
+    Maven 3.9+ ships with improved BOM import support that Spring Boot 3.5.x relies on.
+  </Card>
+  <Card title="Docker Desktop" icon="docker">
+    The three PostgreSQL databases are provisioned as Docker containers. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) for your operating system and ensure the Docker daemon is running before you proceed to the local setup.
+  </Card>
+  <Card title="Git" icon="code-branch">
+    You need Git to clone the repository. Any recent version works:
+
+    ```bash
+    git --version
+    ```
+  </Card>
+</CardGroup>
+
+<Tip>
+  Docker Desktop bundles Docker Engine and Docker Compose. There is no need to install the Compose plugin separately—`docker compose` (v2 syntax without a hyphen) is available out of the box.
+</Tip>
+
+## Port availability
+
+The system runs six application processes and three database containers. Make sure none of the following ports are already in use on your machine before starting:
+
+| Port | Service |
+|------|---------|
+| `8761` | Eureka Server (service registry) |
+| `9000` | Gateway Service (API entry point) |
+| `9090` | Product Service |
+| `9091` | Inventory Service |
+| `9092` | Purchase Service |
+| `5435` | `db-products` PostgreSQL container |
+| `5433` | `db-inventory` PostgreSQL container |
+| `5434` | `db-purchase` PostgreSQL container |
+
+You can check for port conflicts with:
+
+```bash
+# macOS / Linux
+lsof -i :<port>
+
+# Windows (PowerShell)
+netstat -ano | findstr :<port>
+```
+
+## Spring Cloud and Java 25 compatibility
+
+The root `pom.xml` pins **Spring Cloud 2024.0.0** against **Spring Boot 3.5.13**. This combination is validated against the Java 25 release. If your toolchain reports a compatibility warning during the build, confirm that:
+
+1. Your `JAVA_HOME` points to a JDK 25 installation.
+2. You have not mixed JDK versions across modules (e.g., a JDK 21 default alongside a JDK 25 explicit path).
+
+<Note>
+  The `product-service` module overrides the Spring Cloud version to `2025.0.1` in its own `pom.xml`. This is intentional and does not affect the other modules, which inherit `2024.0.0` from the parent BOM.
+</Note>

@@ -1,0 +1,146 @@
+---
+title: "Purchase Order Details API — line item endpoints"
+description: "REST endpoints for querying purchase order line items on port 9092. Each line item links a product and quantity to a purchase order, with computed subtotal."
+keywords: ["purchase order details", "line items", "purchase-service", "subtotal", "product quantity"]
+---
+
+The Purchase Order Details API is part of the **purchase-service** running on port `9092`. Each record represents a single line item on a purchase order — linking a specific product to an ordered quantity and unit price. Responses are enriched with the product name resolved from the **product-service** via OpenFeign. The `subtotal` for each line item is computed directly in the database as `quantity_ordered × unit_price` and is not stored as a separate Java entity field.
+
+<Info>
+  Create, update, and delete operations for purchase order details are on the roadmap. Currently only read operations are implemented.
+</Info>
+
+---
+
+## Endpoints
+
+### GET /purchase-order-details
+
+Returns all purchase order line items, each enriched with the product name.
+
+<Note>
+  If the product lookup via OpenFeign fails for a given line item, `productName` falls back to `"Nombre no disponible"`.
+</Note>
+
+**Response fields**
+
+<ResponseField name="purchaseOrderDetailsId" type="integer" required>
+  Auto-generated primary key of the line item.
+</ResponseField>
+
+<ResponseField name="purchase_order_id" type="integer" required>
+  ID of the parent purchase order this line item belongs to.
+</ResponseField>
+
+<ResponseField name="product_id" type="integer" required>
+  ID of the product being ordered.
+</ResponseField>
+
+<ResponseField name="productName" type="string" required>
+  Product name resolved via OpenFeign call to product-service. Falls back to `"Nombre no disponible"` on error.
+</ResponseField>
+
+<ResponseField name="quantity_ordered" type="integer" required>
+  Number of units ordered. Must be `> 0` (enforced by DB constraint).
+</ResponseField>
+
+<ResponseField name="unit_price" type="number" required>
+  Price per unit at the time of ordering. Stored as `NUMERIC(10, 2)`.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url http://localhost:9092/purchase-order-details
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    [
+      {
+        "purchaseOrderDetailsId": 1,
+        "purchase_order_id": 1,
+        "product_id": 1,
+        "productName": "MacBook Air M2",
+        "quantity_ordered": 5,
+        "unit_price": 1099.00
+      },
+      {
+        "purchaseOrderDetailsId": 2,
+        "purchase_order_id": 2,
+        "product_id": 2,
+        "productName": "Dell XPS 13",
+        "quantity_ordered": 10,
+        "unit_price": 1250.00
+      }
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /purchase-order-details/\{purchaseOrderDetailsId\}
+
+Returns a single purchase order line item by its ID, enriched with the product name.
+
+**Path parameters**
+
+<ParamField path="purchaseOrderDetailsId" type="integer" required>
+  The primary key of the line item to retrieve.
+</ParamField>
+
+**Response fields** — same structure as the list response above. The endpoint returns an array with a single element (or an empty array if not found), matching the list response shape.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url http://localhost:9092/purchase-order-details/1
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    [
+      {
+        "purchaseOrderDetailsId": 1,
+        "purchase_order_id": 1,
+        "product_id": 1,
+        "productName": "MacBook Air M2",
+        "quantity_ordered": 5,
+        "unit_price": 1099.00
+      }
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Computed subtotal
+
+The `subtotal` column is defined in the database schema as a **generated column**:
+
+```sql
+subtotal NUMERIC(12, 2) GENERATED ALWAYS AS (quantity_ordered * unit_price) STORED
+```
+
+This means the database automatically computes and stores the subtotal whenever a row is inserted or updated. Because it is a generated column, it is **not mapped in the Java entity** (`PurchaseOrderDetailsModel`) and does not appear in the API response. To obtain the subtotal, multiply `quantity_ordered` by `unit_price` on the client side, or query the database directly.
+
+<Tip>
+  To compute subtotal from the API response: `subtotal = quantity_ordered × unit_price`.
+</Tip>
+
+---
+
+## Data model
+
+| Field               | Type             | Constraints                            | Notes                                               |
+|---------------------|------------------|----------------------------------------|-----------------------------------------------------|
+| `id`                | `SERIAL`         | Primary key, auto-generated            |                                                     |
+| `purchase_order_id` | `INTEGER`        | `NOT NULL`, `REFERENCES purchase_orders(id) ON DELETE CASCADE` | Deleting the parent order cascades to line items |
+| `product_id`        | `INTEGER`        | `NOT NULL`                             | References a product in product-service             |
+| `quantity_ordered`  | `INTEGER`        | `NOT NULL`, `CHECK (quantity_ordered > 0)` | Must be a positive integer                      |
+| `unit_price`        | `NUMERIC(10, 2)` | `NOT NULL`                             | Price per unit at time of order                     |
+| `subtotal`          | `NUMERIC(12, 2)` | `GENERATED ALWAYS AS (...) STORED`     | Computed by DB; not in Java entity or API response  |

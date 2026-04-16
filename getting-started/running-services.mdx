@@ -1,0 +1,108 @@
+---
+title: "Run all microservices in the correct order"
+description: "Start Eureka Server, Gateway, and all three microservices in dependency order using Maven, then verify service registration and routing."
+---
+
+**Sistema de Gestión de Inventario** is composed of five Spring Boot processes that must be started in a specific order. Eureka Server acts as the service registry: every other service registers itself on startup and queries Eureka to locate its peers. If a service starts before Eureka is ready, it cannot register and inter-service calls (including OpenFeign calls from Purchase Service) will fail.
+
+Make sure the [databases are running](/getting-started/local-setup) before proceeding.
+
+<Warning>
+  Do not start the Gateway or any business service until the Eureka dashboard at `http://localhost:8761` is fully loaded and shows **"Instances currently registered with Eureka"**. Starting services too early causes registration failures that require a restart.
+</Warning>
+
+<Steps>
+  <Step title="Start Eureka Server">
+    Open a dedicated terminal window and run:
+
+    ```bash
+    cd eureka-server
+    mvn spring-boot:run
+    ```
+
+    Wait until you see a log line similar to:
+
+    ```
+    Started EurekaServerApplication in X.XXX seconds
+    ```
+
+    Then open `http://localhost:8761` in your browser. The Eureka dashboard should be visible before you proceed to the next step.
+  </Step>
+
+  <Step title="Start Gateway Service">
+    Open a new terminal window and run:
+
+    ```bash
+    cd gateway-service
+    mvn spring-boot:run
+    ```
+
+    The gateway listens on port **9000** and routes all incoming requests to the registered microservices. Wait for the `Started` log line before continuing.
+  </Step>
+
+  <Step title="Start Product Service">
+    Open a new terminal window and run:
+
+    ```bash
+    cd product-service
+    mvn spring-boot:run
+    ```
+
+    Product Service starts on port **9090** and registers with Eureka as `product-service`. It manages the product catalog, categories, and supplier master data.
+  </Step>
+
+  <Step title="Start Inventory Service">
+    Open a new terminal window and run:
+
+    ```bash
+    cd inventory-service
+    mvn spring-boot:run
+    ```
+
+    Inventory Service starts on port **9091** and registers with Eureka as `inventory-service`. It tracks real-time stock levels and audit movements.
+  </Step>
+
+  <Step title="Start Purchase Service">
+    Open a new terminal window and run:
+
+    ```bash
+    cd purchase-service
+    mvn spring-boot:run
+    ```
+
+    Purchase Service starts on port **9092** and registers with Eureka as `purchase-service`. It uses OpenFeign to call Product Service (to resolve product and supplier names) when listing orders and order details.
+  </Step>
+</Steps>
+
+## Verify Eureka registration
+
+After all five services have started, refresh the Eureka dashboard at `http://localhost:8761`. The **"Instances currently registered with Eureka"** table should list all four application services:
+
+| Application | Status | Port |
+|-------------|--------|------|
+| `GATEWAY-SERVICE` | UP | 9000 |
+| `PRODUCT-SERVICE` | UP | 9090 |
+| `INVENTORY-SERVICE` | UP | 9091 |
+| `PURCHASE-SERVICE` | UP | 9092 |
+
+If a service is missing, check the terminal where it started for registration errors, then restart it.
+
+## Verify gateway routing
+
+With all services registered, confirm that the gateway correctly routes requests. Fetch the product list through the gateway:
+
+```bash
+curl http://localhost:9000/product-service/products
+```
+
+You can also call Product Service directly on its own port:
+
+```bash
+curl http://localhost:9090/products
+```
+
+Both requests should return a JSON array of the 100 seeded products. A successful response confirms that the service is running, Eureka registration succeeded, and (for the gateway path) that routing is configured correctly.
+
+<Info>
+  Product Service exposes a Springdoc OpenAPI UI at `http://localhost:9090/docs`. Use it to explore and test the Products, Categories, and Suppliers endpoints interactively.
+</Info>

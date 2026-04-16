@@ -1,0 +1,110 @@
+---
+title: "Purchase Orders API — vendor order management"
+description: "REST endpoint for querying purchase orders on port 9092. Responses include supplier company names fetched from the Product Service via OpenFeign."
+keywords: ["purchase orders", "vendor", "supplier", "purchase-service", "order status"]
+---
+
+The Purchase Orders API is part of the **purchase-service** running on port `9092`. It exposes purchase orders raised against suppliers. Each order tracks the supplier, the order date, the current approval status, and the total monetary value. The list response is enriched with the supplier's company name, resolved from the **product-service** (which also manages supplier data) via an OpenFeign client call.
+
+<Info>
+  Full CRUD for purchase orders is on the roadmap. Currently only the read (list) operation is implemented.
+</Info>
+
+---
+
+## Order status lifecycle
+
+Purchase orders move through the following statuses:
+
+| Status      | Meaning                                                                   |
+|-------------|---------------------------------------------------------------------------|
+| `PENDING`   | Order created, awaiting internal approval                                 |
+| `APPROVED`  | Order approved internally, sent to supplier                               |
+| `RECEIVED`  | Goods have been received and a goods receipt has been recorded            |
+| `CANCELLED` | Order was cancelled before fulfilment                                     |
+
+---
+
+## Endpoints
+
+### GET /purchase-orders
+
+Returns all purchase orders, each enriched with the supplier's company name.
+
+<Note>
+  If the supplier lookup via OpenFeign fails for a given order, `SupplierName` falls back to `"Nombre no disponible"`.
+</Note>
+
+**Response fields**
+
+<ResponseField name="purchaseOrderID" type="integer" required>
+  Auto-generated primary key of the purchase order.
+</ResponseField>
+
+<ResponseField name="purchase_order_supplier_id" type="integer" required>
+  ID of the supplier that this order was placed with. References supplier data in product-service.
+</ResponseField>
+
+<ResponseField name="SupplierName" type="string" required>
+  Supplier company name resolved via OpenFeign call to product-service. Falls back to `"Nombre no disponible"` on error.
+</ResponseField>
+
+<ResponseField name="purchase_order_orderDate" type="string" required>
+  ISO-8601 datetime when the purchase order was created.
+</ResponseField>
+
+<ResponseField name="purchase_order_status" type="string" required>
+  Current order status: `PENDING`, `APPROVED`, `RECEIVED`, or `CANCELLED`.
+</ResponseField>
+
+<ResponseField name="purchase_order_total_ammount" type="number" required>
+  Total monetary value of the order. Stored as `NUMERIC(12, 2)`. Note: the response key name `purchase_order_total_ammount` contains a typo (`ammount`) inherited from the source code.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url http://localhost:9092/purchase-orders
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    [
+      {
+        "purchaseOrderID": 1,
+        "purchase_order_supplier_id": 1,
+        "SupplierName": "Tech Supplies S.A.",
+        "purchase_order_orderDate": "2026-04-10T08:00:00",
+        "purchase_order_status": "RECEIVED",
+        "purchase_order_total_ammount": 5495.00
+      },
+      {
+        "purchaseOrderID": 2,
+        "purchase_order_supplier_id": 3,
+        "SupplierName": "Global Electronics Ltd.",
+        "purchase_order_orderDate": "2026-04-12T10:30:00",
+        "purchase_order_status": "APPROVED",
+        "purchase_order_total_ammount": 12500.00
+      }
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Data model
+
+| Field          | Type             | Constraints                                                          | Notes                                        |
+|----------------|------------------|----------------------------------------------------------------------|----------------------------------------------|
+| `id`           | `SERIAL`         | Primary key, auto-generated                                          |                                              |
+| `order_code`   | `VARCHAR(20)`    | `UNIQUE`, `NOT NULL`                                                 | Human-readable unique identifier, e.g. `OC-2026-001` |
+| `supplier_id`  | `INTEGER`        | `NOT NULL`                                                           | References supplier in product-service       |
+| `order_date`   | `TIMESTAMP`      | `DEFAULT CURRENT_TIMESTAMP`                                          | When the order was created                   |
+| `status`       | `VARCHAR(20)`    | `CHECK (status IN ('PENDING', 'APPROVED', 'RECEIVED', 'CANCELLED'))` | Current lifecycle state                      |
+| `total_amount` | `NUMERIC(12, 2)` | `DEFAULT 0.00`                                                       | Monetary total; updated as line items change |
+
+<Note>
+  The `order_code` column (e.g. `OC-2026-001`) is defined in the database schema as a `UNIQUE` identifier but is not currently mapped in the Java entity or included in the API response. It is available directly in the database.
+</Note>

@@ -1,0 +1,227 @@
+---
+title: "Database schemas for all three PostgreSQL services"
+description: "Complete schema reference for product_db, inventory_db, and purchase_db — tables, columns, constraints, indexes, triggers, and seed data."
+---
+
+Sistema de Gestión de Inventario follows the **Database-per-Service** pattern: each microservice owns an isolated PostgreSQL instance with no shared schema and no cross-database foreign keys. This page documents every table, column, constraint, index, and trigger across all three databases, along with the seed data included in the initialization scripts.
+
+The three databases are:
+
+<CardGroup cols={3}>
+  <Card title="product_db" icon="box">
+    Port **5435** — suppliers, categories, and the product catalog with automatic timestamp triggers.
+  </Card>
+  <Card title="inventory_db" icon="warehouse">
+    Port **5433** — current stock levels, goods receipts, and the full stock-movement ledger.
+  </Card>
+  <Card title="purchase_db" icon="file-invoice">
+    Port **5434** — purchase orders and their line items with a computed subtotal column.
+  </Card>
+</CardGroup>
+
+---
+
+## product\_db (port 5435)
+
+### suppliers
+
+Stores information about the vendors who supply products.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `SERIAL` | PRIMARY KEY |
+| `company_name` | `VARCHAR(150)` | NOT NULL |
+| `contact_name` | `VARCHAR(100)` | — |
+| `email` | `VARCHAR(100)` | — |
+| `phone` | `VARCHAR(20)` | — |
+| `address` | `TEXT` | — |
+| `status` | `BOOLEAN` | DEFAULT TRUE |
+| `country` | `VARCHAR(100)` | — |
+| `city` | `VARCHAR(100)` | — |
+| `updated_at` | `TIMESTAMP` | DEFAULT CURRENT\_TIMESTAMP |
+| `created_at` | `TIMESTAMP` | DEFAULT CURRENT\_TIMESTAMP |
+
+### categories
+
+Groups products into catalog segments.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `SERIAL` | PRIMARY KEY |
+| `name` | `VARCHAR(50)` | NOT NULL UNIQUE |
+| `description` | `TEXT` | — |
+| `status` | `BOOLEAN` | DEFAULT TRUE |
+| `updated_at` | `TIMESTAMP` | DEFAULT CURRENT\_TIMESTAMP |
+| `created_at` | `TIMESTAMP` | DEFAULT CURRENT\_TIMESTAMP |
+
+### products
+
+The central catalog table, linked to both `categories` and `suppliers`.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `SERIAL` | PRIMARY KEY |
+| `sku` | `VARCHAR(20)` | NOT NULL UNIQUE |
+| `name` | `VARCHAR(100)` | NOT NULL |
+| `description` | `TEXT` | — |
+| `price` | `NUMERIC(10,2)` | NOT NULL, CHECK (price >= 0) |
+| `category_id` | `INTEGER` | FK → categories(id) |
+| `supplier_id` | `INTEGER` | FK → suppliers(id) |
+| `status` | `BOOLEAN` | DEFAULT TRUE |
+| `updated_at` | `TIMESTAMP` | DEFAULT CURRENT\_TIMESTAMP |
+| `created_at` | `TIMESTAMP` | DEFAULT CURRENT\_TIMESTAMP |
+
+**Indexes**
+
+```sql
+CREATE INDEX idx_products_category ON products (category_id);
+CREATE INDEX idx_products_supplier ON products (supplier_id);
+```
+
+**Trigger — auto-update `updated_at`**
+
+A single reusable function is applied as a `BEFORE UPDATE` trigger to all three tables (`products`, `categories`, `suppliers`):
+
+```sql
+CREATE OR REPLACE FUNCTION update_timestamp_column()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.updated_at = CURRENT_TIMESTAMP;
+   RETURN NEW;
+END;
+$$ LANGUAGE 'plpgsql';
+
+CREATE TRIGGER update_products_modtime
+    BEFORE UPDATE ON products
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+CREATE TRIGGER update_products_modtime
+    BEFORE UPDATE ON categories
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+CREATE TRIGGER update_products_modtime
+    BEFORE UPDATE ON suppliers
+    FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+```
+
+**Seed data**
+
+The init script seeds 10 categories (Laptops, Monitores, Almacenamiento, Componentes, Periféricos, Redes, Impresión, Servidores, Software, Accesorios), 10 suppliers (Panamá-based distributors and global brands), and 100 products spread evenly across all categories.
+
+---
+
+## inventory\_db (port 5433)
+
+### inventory
+
+The current stock snapshot for every tracked product.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `SERIAL` | PRIMARY KEY |
+| `product_id` | `INTEGER` | NOT NULL UNIQUE |
+| `quantity` | `INTEGER` | NOT NULL, DEFAULT 0, CHECK (quantity >= 0) |
+| `last_updated` | `TIMESTAMP` | DEFAULT CURRENT\_TIMESTAMP |
+
+### goods\_receipts
+
+Header record for each physical delivery received at the warehouse.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `SERIAL` | PRIMARY KEY |
+| `purchase_order_id` | `INTEGER` | NOT NULL |
+| `received_date` | `TIMESTAMP` | DEFAULT CURRENT\_TIMESTAMP |
+| `received_by` | `VARCHAR(100)` | NOT NULL |
+
+### stock\_movements
+
+The full movement ledger (Kardex). Every stock change — inbound shipment, outbound dispatch, or manual correction — is recorded here.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `SERIAL` | PRIMARY KEY |
+| `product_id` | `INTEGER` | NOT NULL |
+| `goods_receipt_id` | `INTEGER` | FK → goods\_receipts(id), nullable |
+| `type` | `VARCHAR(10)` | CHECK (type IN ('IN', 'OUT', 'ADJUSTMENT')) |
+| `amount` | `INTEGER` | NOT NULL |
+| `reason` | `TEXT` | — |
+| `updated_at` | `TIMESTAMP` | DEFAULT CURRENT\_TIMESTAMP |
+| `created_at` | `TIMESTAMP` | DEFAULT CURRENT\_TIMESTAMP |
+
+The three movement types:
+
+- **IN** — merchandise entering the warehouse; increases `inventory.quantity`.
+- **OUT** — merchandise leaving the warehouse (sales, transfers, supplier returns); decreases `inventory.quantity`.
+- **ADJUSTMENT** — manual correction for physical-count discrepancies; amount may be negative.
+
+```sql
+CREATE TABLE stock_movements
+(
+    id               SERIAL PRIMARY KEY,
+    product_id       INTEGER NOT NULL,
+    goods_receipt_id INTEGER REFERENCES goods_receipts (id),
+    type             VARCHAR(10) CHECK (type IN ('IN', 'OUT', 'ADJUSTMENT')),
+    amount           INTEGER NOT NULL,
+    reason           TEXT,
+    updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+---
+
+## purchase\_db (port 5434)
+
+### purchase\_orders
+
+One record per purchase order issued to a supplier.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `SERIAL` | PRIMARY KEY |
+| `order_code` | `VARCHAR(20)` | UNIQUE NOT NULL (e.g. `OC-2026-001`) |
+| `supplier_id` | `INTEGER` | NOT NULL |
+| `order_date` | `TIMESTAMP` | DEFAULT CURRENT\_TIMESTAMP |
+| `status` | `VARCHAR(20)` | CHECK (status IN ('PENDING', 'APPROVED', 'RECEIVED', 'CANCELLED')) |
+| `total_amount` | `NUMERIC(12,2)` | DEFAULT 0.00 |
+
+### purchase\_order\_details
+
+Line items for each purchase order. The `subtotal` column is computed automatically by the database engine and never written manually.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `SERIAL` | PRIMARY KEY |
+| `purchase_order_id` | `INTEGER` | NOT NULL, FK → purchase\_orders(id) ON DELETE CASCADE |
+| `product_id` | `INTEGER` | NOT NULL |
+| `quantity_ordered` | `INTEGER` | NOT NULL, CHECK (quantity\_ordered > 0) |
+| `unit_price` | `NUMERIC(10,2)` | NOT NULL |
+| `subtotal` | `NUMERIC(12,2)` | GENERATED ALWAYS AS (quantity\_ordered \* unit\_price) STORED |
+
+```sql
+CREATE TABLE purchase_order_details
+(
+    id                SERIAL PRIMARY KEY,
+    purchase_order_id INTEGER        NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    product_id        INTEGER        NOT NULL,
+    quantity_ordered  INTEGER        NOT NULL CHECK (quantity_ordered > 0),
+    unit_price        NUMERIC(10, 2) NOT NULL,
+    subtotal          NUMERIC(12, 2) GENERATED ALWAYS AS (quantity_ordered * unit_price) STORED
+);
+```
+
+**Indexes**
+
+```sql
+CREATE INDEX idx_po_supplier  ON purchase_orders(supplier_id);
+CREATE INDEX idx_pod_product  ON purchase_order_details(product_id);
+```
+
+---
+
+## Cross-service product references
+
+<Note>
+`product_id` and `supplier_id` columns in `inventory_db` and `purchase_db` are plain `INTEGER` columns — not foreign keys pointing at `product_db` or `supplier` tables. This is intentional: the Database-per-Service pattern forbids cross-database FK constraints because each service must be deployable and migrated independently. Data consistency across services is maintained at the application layer through OpenFeign calls to Product Service endpoints.
+</Note>

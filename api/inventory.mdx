@@ -1,0 +1,295 @@
+---
+title: "Inventory API — stock level management endpoints"
+description: "REST endpoints for reading and managing inventory records on port 9091. Each record links a product to its current quantity and last-updated timestamp."
+keywords: ["inventory", "stock", "inventory-service", "product quantity"]
+---
+
+The Inventory API is part of the **inventory-service** running on port `9091`. It manages per-product stock quantities — each inventory record associates a product with its current stock level and a timestamp of the last change. Responses from `GET /inventory` and `GET /inventory/{productId}` are enriched with the product name resolved from the **product-service** via OpenFeign.
+
+<Note>
+  The `inventory` table enforces a `UNIQUE` constraint on `product_id`. Each product can have at most one inventory record.
+</Note>
+
+---
+
+## Endpoints
+
+### GET /inventory
+
+Returns all inventory records, each enriched with the product name fetched from product-service.
+
+<Note>
+  If product-service is unreachable for a given record, `productName` falls back to `"Nombre no disponible"`.
+</Note>
+
+**Response fields**
+
+<ResponseField name="inventoryId" type="integer" required>
+  Auto-generated primary key of the inventory record.
+</ResponseField>
+
+<ResponseField name="productId" type="integer" required>
+  Foreign key referencing the product in product-service.
+</ResponseField>
+
+<ResponseField name="productName" type="string" required>
+  Product name resolved via OpenFeign call to product-service. Falls back to `"Nombre no disponible"` on error.
+</ResponseField>
+
+<ResponseField name="stock" type="integer" required>
+  Current stock quantity. Always `>= 0` (enforced by DB constraint).
+</ResponseField>
+
+<ResponseField name="inventoryLastUpdate" type="string" required>
+  ISO-8601 datetime of the last inventory update (e.g. `"2026-04-16T10:30:00"`).
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url http://localhost:9091/inventory
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    [
+      {
+        "inventoryId": 1,
+        "productId": 1,
+        "productName": "MacBook Air M2",
+        "stock": 15,
+        "inventoryLastUpdate": "2026-04-16T10:00:00"
+      },
+      {
+        "inventoryId": 2,
+        "productId": 2,
+        "productName": "Dell XPS 13",
+        "stock": 8,
+        "inventoryLastUpdate": "2026-04-15T08:45:00"
+      }
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /inventory/\{productId\}
+
+Returns a single inventory record for the given product ID, enriched with the product name.
+
+**Path parameters**
+
+<ParamField path="productId" type="integer" required>
+  The ID of the product whose inventory record you want to retrieve.
+</ParamField>
+
+**Response fields**
+
+<ResponseField name="inventoryId" type="integer" required>
+  Primary key of the inventory record.
+</ResponseField>
+
+<ResponseField name="productId" type="integer" required>
+  The requested product ID.
+</ResponseField>
+
+<ResponseField name="productName" type="string" required>
+  Product name resolved via OpenFeign.
+</ResponseField>
+
+<ResponseField name="stock" type="integer" required>
+  Current quantity in stock.
+</ResponseField>
+
+<ResponseField name="inventoryLastUpdate" type="string" required>
+  ISO-8601 datetime of the last update.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url http://localhost:9091/inventory/1
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "inventoryId": 1,
+      "productId": 1,
+      "productName": "MacBook Air M2",
+      "stock": 15,
+      "inventoryLastUpdate": "2026-04-16T10:00:00"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /inventory
+
+Creates a new inventory record. Because the `product_id` column has a `UNIQUE` constraint, submitting a duplicate `productId` will result in a database error.
+
+**Request body**
+
+<ParamField body="productId" type="integer" required>
+  ID of the product to track. Must be unique — one record per product.
+</ParamField>
+
+<ParamField body="quantity" type="integer" required>
+  Initial stock quantity. Must be `>= 0`.
+</ParamField>
+
+<ParamField body="last_updated" type="string">
+  ISO-8601 datetime. If omitted, the database defaults to `CURRENT_TIMESTAMP`.
+</ParamField>
+
+**Response fields**
+
+<ResponseField name="id" type="integer" required>
+  Auto-generated primary key of the new record.
+</ResponseField>
+
+<ResponseField name="productId" type="integer" required>
+  Product ID stored in the record.
+</ResponseField>
+
+<ResponseField name="quantity" type="integer" required>
+  Stored stock quantity.
+</ResponseField>
+
+<ResponseField name="last_updated" type="string" required>
+  Timestamp of creation.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request POST \
+      --url http://localhost:9091/inventory \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "productId": 1,
+        "quantity": 50
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "id": 11,
+      "productId": 1,
+      "quantity": 50,
+      "last_updated": "2026-04-16T12:00:00"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /inventory
+
+Updates an existing inventory record. The full record (including `id`) must be supplied in the request body — there is no path ID parameter.
+
+**Request body**
+
+<ParamField body="id" type="integer" required>
+  Primary key of the record to update.
+</ParamField>
+
+<ParamField body="productId" type="integer" required>
+  Product ID associated with this record.
+</ParamField>
+
+<ParamField body="quantity" type="integer" required>
+  New stock quantity. Must be `>= 0`.
+</ParamField>
+
+<ParamField body="last_updated" type="string">
+  Updated timestamp. Defaults to `CURRENT_TIMESTAMP` in the database if not provided.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request PUT \
+      --url http://localhost:9091/inventory \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "id": 11,
+        "productId": 1,
+        "quantity": 75,
+        "last_updated": "2026-04-16T14:00:00"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "id": 11,
+      "productId": 1,
+      "quantity": 75,
+      "last_updated": "2026-04-16T14:00:00"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### DELETE /inventory
+
+Deletes an inventory record. The record to delete is identified by the full entity body — there is no path ID parameter.
+
+<Warning>
+  This operation is irreversible. Deleting an inventory record removes all current stock tracking for the associated product.
+</Warning>
+
+**Request body**
+
+<ParamField body="id" type="integer" required>
+  Primary key of the record to delete.
+</ParamField>
+
+<ParamField body="productId" type="integer" required>
+  Product ID of the record to delete.
+</ParamField>
+
+<ParamField body="quantity" type="integer" required>
+  Current quantity stored in the record.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request DELETE \
+      --url http://localhost:9091/inventory \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "id": 11,
+        "productId": 1,
+        "quantity": 75
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```text 200
+    (empty body)
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Data model
+
+| Field          | Type            | Constraints                        | Notes                              |
+|----------------|-----------------|------------------------------------|------------------------------------|
+| `id`           | `SERIAL`        | Primary key, auto-generated        |                                    |
+| `product_id`   | `INTEGER`       | `NOT NULL`, `UNIQUE`               | One record per product             |
+| `quantity`     | `INTEGER`       | `NOT NULL`, `DEFAULT 0`, `>= 0`    | Current stock level                |
+| `last_updated` | `TIMESTAMP`     | `DEFAULT CURRENT_TIMESTAMP`        | Set by DB on insert; set by app on update |

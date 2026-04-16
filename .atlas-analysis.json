@@ -1,0 +1,71 @@
+{
+  "projectType": "api-service",
+  "projectName": "Sistema de Gestión de Inventario",
+  "projectDescription": "A distributed microservices system built with Spring Boot and Spring Cloud for full-stack inventory control, covering products, stock movements, and purchase orders.",
+  "theme": "luma",
+  "primaryColor": "#2563EB",
+  "lightColor": "#EFF6FF",
+  "darkColor": "#1D4ED8",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["introduction", "architecture"]
+          },
+          {
+            "group": "Getting Started",
+            "pages": ["getting-started/prerequisites", "getting-started/local-setup", "getting-started/running-services"]
+          },
+          {
+            "group": "Services",
+            "pages": ["services/product-service", "services/inventory-service", "services/purchase-service", "services/gateway-and-discovery"]
+          },
+          {
+            "group": "Data & Infrastructure",
+            "pages": ["infrastructure/database-schema", "infrastructure/docker-setup", "infrastructure/inter-service-communication"]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Product Service",
+            "pages": ["api/products", "api/categories", "api/suppliers"]
+          },
+          {
+            "group": "Inventory Service",
+            "pages": ["api/inventory", "api/stock-movements", "api/goods-receipts"]
+          },
+          {
+            "group": "Purchase Service",
+            "pages": ["api/purchase-orders", "api/purchase-order-details"]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Microservices architecture with Spring Cloud (Eureka, Gateway, OpenFeign)",
+    "Product catalog management with categories and suppliers",
+    "Real-time inventory stock tracking with movement auditing",
+    "Purchase order orchestration across services via OpenFeign",
+    "Database-per-service pattern with PostgreSQL (Docker Compose)",
+    "Dynamic product filtering with JPA Specifications",
+    "Dashboard statistics aggregated from product, category, and supplier data"
+  ],
+  "publicApiSurface": [
+    "GET/POST/PUT/DELETE /products — Product catalog management",
+    "GET/POST/PUT/DELETE /supplier — Supplier management",
+    "GET/POST/PUT/DELETE /category — Category management",
+    "GET /products/dashboard — Aggregated inventory dashboard stats",
+    "GET/POST/PUT/DELETE /inventory — Inventory stock records",
+    "GET/POST/PUT/DELETE /stockMovements — Stock movement audit log",
+    "GET/POST/PUT /goodReceipts — Goods receipt records",
+    "GET /purchase-orders — Purchase orders with supplier enrichment",
+    "GET /purchase-order-details — Order line items with product enrichment"
+  ]
+}

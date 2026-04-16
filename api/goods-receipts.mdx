@@ -1,0 +1,207 @@
+---
+title: "Goods Receipts API — purchase delivery records"
+description: "REST endpoints for recording and querying goods receipts — delivery events when purchased goods arrive and are accepted into the warehouse."
+keywords: ["goods receipts", "delivery", "warehouse", "purchase order", "inventory-service"]
+---
+
+The Goods Receipts API is part of the **inventory-service** running on port `9091`. A goods receipt is created whenever purchased goods physically arrive at the warehouse and are accepted. Each receipt records which purchase order it fulfils, when the delivery was received, and who accepted it. Goods receipts serve as the anchor for stock movement records — an `IN` stock movement links back to the goods receipt that caused the stock increase.
+
+<Info>
+  Goods receipts bridge the **purchase-service** and the **inventory-service**. The `purchase_order_id` field references a purchase order managed by purchase-service (port 8092), while associated stock movements are tracked within inventory-service.
+</Info>
+
+---
+
+## Endpoints
+
+### GET /goodReceipts
+
+Returns all goods receipt records.
+
+**Response fields**
+
+<ResponseField name="id" type="integer" required>
+  Auto-generated primary key of the goods receipt.
+</ResponseField>
+
+<ResponseField name="purchase_order_id" type="integer" required>
+  ID of the purchase order this receipt fulfils. References purchase-service.
+</ResponseField>
+
+<ResponseField name="received_date" type="string" required>
+  ISO-8601 datetime when the delivery was received. Defaults to `CURRENT_TIMESTAMP` if not set explicitly.
+</ResponseField>
+
+<ResponseField name="received_by" type="string" required>
+  Name of the person who accepted the delivery (up to 100 characters).
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url http://localhost:9091/goodReceipts
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    [
+      {
+        "id": 1,
+        "purchase_order_id": 1,
+        "received_date": "2026-04-16T09:00:00",
+        "received_by": "Leandro R."
+      },
+      {
+        "id": 2,
+        "purchase_order_id": 4,
+        "received_date": "2026-04-15T14:30:00",
+        "received_by": "Carlos M."
+      }
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /goodReceipts/\{goodReceiptsId\}
+
+Returns a single goods receipt record by its ID.
+
+**Path parameters**
+
+<ParamField path="goodReceiptsId" type="integer" required>
+  The primary key of the goods receipt to retrieve.
+</ParamField>
+
+**Response fields** — same structure as the list response above.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url http://localhost:9091/goodReceipts/1
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "id": 1,
+      "purchase_order_id": 1,
+      "received_date": "2026-04-16T09:00:00",
+      "received_by": "Leandro R."
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /goodReceipts
+
+Creates a new goods receipt record. Returns HTTP `201 Created` on success.
+
+**Request body**
+
+<ParamField body="purchase_order_id" type="integer" required>
+  ID of the purchase order this receipt is associated with.
+</ParamField>
+
+<ParamField body="received_by" type="string" required>
+  Name of the person who accepted the delivery. Maximum 100 characters.
+</ParamField>
+
+<ParamField body="received_date" type="string">
+  ISO-8601 datetime of the delivery. Defaults to `CURRENT_TIMESTAMP` if omitted.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request POST \
+      --url http://localhost:9091/goodReceipts \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "purchase_order_id": 1,
+        "received_by": "Juan Pérez"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 201
+    {
+      "id": 4,
+      "purchase_order_id": 1,
+      "received_date": "2026-04-16T12:00:00",
+      "received_by": "Juan Pérez"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /goodReceipts/\{goodsReceiptsId\}
+
+Updates an existing goods receipt record by its path ID.
+
+**Path parameters**
+
+<ParamField path="goodsReceiptsId" type="integer" required>
+  The primary key of the goods receipt to update.
+</ParamField>
+
+**Request body**
+
+<ParamField body="purchase_order_id" type="integer" required>
+  Updated purchase order ID.
+</ParamField>
+
+<ParamField body="received_by" type="string" required>
+  Updated name of the person who accepted the delivery.
+</ParamField>
+
+<ParamField body="received_date" type="string">
+  Updated ISO-8601 delivery datetime.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request PUT \
+      --url http://localhost:9091/goodReceipts/4 \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "purchase_order_id": 1,
+        "received_by": "María García",
+        "received_date": "2026-04-16T13:00:00"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "id": 4,
+      "purchase_order_id": 1,
+      "received_date": "2026-04-16T13:00:00",
+      "received_by": "María García"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Data model
+
+| Field               | Type           | Constraints                             | Notes                                        |
+|---------------------|----------------|-----------------------------------------|----------------------------------------------|
+| `id`                | `SERIAL`       | Primary key, auto-generated             |                                              |
+| `purchase_order_id` | `INTEGER`      | `NOT NULL`                              | References a purchase order in purchase-service |
+| `received_date`     | `TIMESTAMP`    | `DEFAULT CURRENT_TIMESTAMP`             | Delivery acceptance datetime                 |
+| `received_by`       | `VARCHAR(100)` | `NOT NULL`                              | Name of the receiving warehouse employee     |
+
+<Note>
+  Stock movement records in the `stock_movements` table may reference a goods receipt via the `goods_receipt_id` foreign key. When an `IN` movement is associated with a goods receipt, it means that specific delivery caused the stock increase.
+</Note>

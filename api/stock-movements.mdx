@@ -1,0 +1,286 @@
+---
+title: "Stock Movements API — audit log of inventory changes"
+description: "REST endpoints for recording and querying stock movements — IN, OUT, and ADJUSTMENT transactions that track every change to inventory quantities."
+keywords: ["stock movements", "audit log", "kardex", "inventory transactions", "inventory-service"]
+---
+
+The Stock Movements API is part of the **inventory-service** running on port `9091`. It provides a historical ledger (kardex) of every quantity change to inventory — whether goods were received (`IN`), dispatched (`OUT`), or manually corrected (`ADJUSTMENT`). Each movement record can optionally reference a goods receipt via `goods_receipt_id`, linking the movement to a delivery event.
+
+---
+
+## Movement types
+
+| Type         | Effect on stock | When to use                                                      |
+|--------------|-----------------|------------------------------------------------------------------|
+| `IN`         | Increases       | Goods received from a supplier or purchase order                 |
+| `OUT`        | Decreases       | Goods dispatched: sales, branch transfers, supplier returns      |
+| `ADJUSTMENT` | Increases or decreases | Manual correction of discrepancies between system and physical count |
+
+<Info>
+  The `amount` field stores the magnitude of the change. For `ADJUSTMENT` movements, a negative value (e.g. `-1`) represents a downward correction. The DB schema stores `amount` as `INTEGER`.
+</Info>
+
+<Note>
+  Stock movement records link to goods receipts via `goods_receipt_id` (a foreign key to the `goods_receipts` table). This field is optional — movements triggered by sales or adjustments may not be associated with a receipt.
+</Note>
+
+---
+
+## Endpoints
+
+### GET /stockMovements
+
+Returns all stock movement records.
+
+**Response fields**
+
+<ResponseField name="id" type="integer" required>
+  Auto-generated primary key of the movement record.
+</ResponseField>
+
+<ResponseField name="productId" type="integer" required>
+  ID of the product affected by this movement.
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  Movement type: `IN`, `OUT`, or `ADJUSTMENT`.
+</ResponseField>
+
+<ResponseField name="amount" type="number" required>
+  Quantity moved. Negative values indicate reductions (typically used with `ADJUSTMENT`).
+</ResponseField>
+
+<ResponseField name="reason" type="string">
+  Human-readable description of why the movement occurred (e.g. `"Purchase order received"`).
+</ResponseField>
+
+<ResponseField name="received_date" type="string" required>
+  ISO-8601 datetime when the movement was recorded.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url http://localhost:9091/stockMovements
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    [
+      {
+        "id": 1,
+        "productId": 1,
+        "type": "IN",
+        "amount": 15.0,
+        "reason": "Carga inicial de inventario",
+        "received_date": "2026-04-16T08:00:00"
+      },
+      {
+        "id": 2,
+        "productId": 11,
+        "type": "OUT",
+        "amount": 2.0,
+        "reason": "Venta directa a cliente corporativo",
+        "received_date": "2026-04-16T09:30:00"
+      }
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /stockMovements/\{stockMovementsId\}
+
+Returns a single stock movement record by its ID.
+
+**Path parameters**
+
+<ParamField path="stockMovementsId" type="integer" required>
+  The primary key of the stock movement to retrieve. Returns `null` (empty body) if not found.
+</ParamField>
+
+**Response fields** — same structure as the list response above.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url http://localhost:9091/stockMovements/1
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "id": 1,
+      "productId": 1,
+      "type": "IN",
+      "amount": 15.0,
+      "reason": "Carga inicial de inventario",
+      "received_date": "2026-04-16T08:00:00"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /stockMovements
+
+Creates a new stock movement record.
+
+**Request body**
+
+<ParamField body="productId" type="integer" required>
+  ID of the product affected by this movement.
+</ParamField>
+
+<ParamField body="type" type="string" required>
+  Movement type. Must be one of: `IN`, `OUT`, `ADJUSTMENT`.
+</ParamField>
+
+<ParamField body="amount" type="number" required>
+  Quantity affected. Use a negative value for downward adjustments.
+</ParamField>
+
+<ParamField body="reason" type="string">
+  Optional description of why the movement occurred.
+</ParamField>
+
+<ParamField body="received_date" type="string">
+  ISO-8601 datetime. Defaults to the database `CURRENT_TIMESTAMP` if omitted.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request POST \
+      --url http://localhost:9091/stockMovements \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "productId": 1,
+        "type": "IN",
+        "amount": 25.0,
+        "reason": "Purchase order received"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "id": 7,
+      "productId": 1,
+      "type": "IN",
+      "amount": 25.0,
+      "reason": "Purchase order received",
+      "received_date": "2026-04-16T12:00:00"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /stockMovements
+
+Updates an existing stock movement record. The full record (including `id`) must be supplied in the request body — there is no path ID parameter.
+
+**Request body**
+
+<ParamField body="id" type="integer" required>
+  Primary key of the record to update.
+</ParamField>
+
+<ParamField body="productId" type="integer" required>
+  ID of the product affected.
+</ParamField>
+
+<ParamField body="type" type="string" required>
+  Movement type: `IN`, `OUT`, or `ADJUSTMENT`.
+</ParamField>
+
+<ParamField body="amount" type="number" required>
+  Updated quantity.
+</ParamField>
+
+<ParamField body="reason" type="string">
+  Updated reason description.
+</ParamField>
+
+<ParamField body="received_date" type="string">
+  Updated ISO-8601 datetime.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request PUT \
+      --url http://localhost:9091/stockMovements \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "id": 7,
+        "productId": 1,
+        "type": "IN",
+        "amount": 30.0,
+        "reason": "Purchase order received — quantity corrected"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "id": 7,
+      "productId": 1,
+      "type": "IN",
+      "amount": 30.0,
+      "reason": "Purchase order received — quantity corrected",
+      "received_date": "2026-04-16T12:00:00"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### DELETE /stockMovements/\{stockMovementsId\}
+
+Deletes a stock movement record by its ID.
+
+<Warning>
+  Deleting a stock movement record removes it permanently from the audit log. This action cannot be undone.
+</Warning>
+
+**Path parameters**
+
+<ParamField path="stockMovementsId" type="integer" required>
+  The primary key of the stock movement to delete.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request DELETE \
+      --url http://localhost:9091/stockMovements/7
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```text 200
+    (empty body)
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Data model
+
+| Field            | Type        | Constraints                                        | Notes                                         |
+|------------------|-------------|----------------------------------------------------|-----------------------------------------------|
+| `id`             | `SERIAL`    | Primary key, auto-generated                        |                                               |
+| `product_id`     | `INTEGER`   | `NOT NULL`                                         | References a product in product-service       |
+| `goods_receipt_id` | `INTEGER` | Optional, `REFERENCES goods_receipts(id)`          | Links movement to a delivery event            |
+| `type`           | `VARCHAR(10)` | `CHECK (type IN ('IN', 'OUT', 'ADJUSTMENT'))`   | Movement direction                            |
+| `amount`         | `INTEGER`   | `NOT NULL`                                         | Quantity changed; negative for reductions     |
+| `reason`         | `TEXT`      | Optional                                           | Human-readable explanation                    |
+| `received_date`  | `TIMESTAMP` | `DEFAULT CURRENT_TIMESTAMP`                        | Mapped from DB `updated_at`/`created_at`      |

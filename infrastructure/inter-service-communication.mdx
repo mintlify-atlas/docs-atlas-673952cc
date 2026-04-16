@@ -1,0 +1,121 @@
+---
+title: "Inter-service communication with OpenFeign and Eureka"
+description: "How Purchase Service and Inventory Service call Product Service endpoints using Spring Cloud OpenFeign clients registered through Netflix Eureka discovery."
+---
+
+Sistema de Gestión de Inventario uses **Spring Cloud OpenFeign** for synchronous HTTP communication between microservices, with **Netflix Eureka** providing service discovery. Rather than hardcoding IP addresses or ports, each service registers itself in Eureka by name, and Feign clients resolve those names at runtime. This page documents which services call which endpoints and how the clients are declared.
+
+---
+
+## Architecture overview
+
+Both Purchase Service and Inventory Service need to resolve human-readable names (product names, supplier names) from Product Service. Neither service stores a copy of that data — they call Product Service on demand.
+
+```
+┌──────────────────────┐        OpenFeign        ┌─────────────────────┐
+│   Purchase Service   │ ──────────────────────► │   Product Service   │
+└──────────────────────┘                         └─────────────────────┘
+                                                           ▲
+┌──────────────────────┐        OpenFeign                  │
+│   Inventory Service  │ ──────────────────────────────────┘
+└──────────────────────┘
+
+          All three services register with Eureka Server
+                  and discover each other by name.
+```
+
+---
+
+## How OpenFeign works here
+
+OpenFeign is a declarative HTTP client. Instead of writing `RestTemplate` or `WebClient` calls, you define a Java interface annotated with `@FeignClient` and Spring generates the implementation at startup. The key points for this system:
+
+- The `name` (or `value`) attribute of `@FeignClient` is the **Eureka application name** of the target service, not a hostname.
+- Eureka resolves that name to one or more live instances. Feign (via Spring Cloud LoadBalancer) picks an instance and issues the HTTP call.
+- No IP address or port is ever hardcoded in the client code.
+
+---
+
+## Feign clients
+
+### SupplierClient — purchase-service
+
+Retrieves a supplier's name by ID from Product Service.
+
+**Endpoint called:** `GET /supplier/{supplierId}/name` on `product-service`
+
+```java
+@FeignClient(name = "product-service", contextId = "supplierClient")
+public interface SupplierClient {
+
+    @GetMapping("/supplier/{supplierId}/name")
+    String getSupplierName(@PathVariable("supplierId") Integer supplierId);
+}
+```
+
+### ProductClient — purchase-service
+
+Retrieves a product's name by ID from Product Service, used when building purchase order responses.
+
+**Endpoint called:** `GET /product/{productId}/name` on `product-service`
+
+```java
+@FeignClient(name = "product-service", contextId = "productClientPurchase")
+public interface ProductClient {
+
+    @GetMapping("/product/{productId}/name")
+    String getProductName(@PathVariable("productId") Integer productId);
+}
+```
+
+### ProductClient — inventory-service
+
+Identical endpoint target, but declared independently inside Inventory Service to keep the services fully decoupled.
+
+**Endpoint called:** `GET /product/{productId}/name` on `product-service`
+
+```java
+@FeignClient(name = "product-service", contextId = "productClientInventory")
+public interface ProductClient {
+
+    @GetMapping("/product/{productId}/name")
+    String getProductName(@PathVariable("productId") Integer productId);
+}
+```
+
+---
+
+## How Eureka enables this
+
+<Steps>
+  <Step title="Services register on startup">
+    Every microservice (Product Service, Purchase Service, Inventory Service) includes `spring-cloud-starter-netflix-eureka-client` and configures `eureka.client.service-url.defaultZone` pointing at the Eureka Server. On startup each service registers under the name defined by `spring.application.name`.
+  </Step>
+  <Step title="Eureka Server maintains the registry">
+    The Eureka Server holds a live registry of all registered instances — their application names, host addresses, ports, and health status. Clients fetch and cache this registry periodically.
+  </Step>
+  <Step title="Feign resolves the name">
+    When a Feign client method is called, Spring Cloud LoadBalancer queries the local Eureka registry for all healthy instances of `product-service` and selects one. Feign then constructs the full URL (`http://<resolved-host>:<resolved-port>/product/{id}/name`) and issues the request.
+  </Step>
+  <Step title="No hardcoded addresses">
+    If Product Service moves to a different host or port, or scales to multiple instances, no configuration change is needed in Purchase Service or Inventory Service — Eureka handles the routing transparently.
+  </Step>
+</Steps>
+
+---
+
+## The `contextId` attribute
+
+<Info>
+When a single service declares **more than one** `@FeignClient` targeting the same `name` (e.g., both `SupplierClient` and `ProductClient` in purchase-service both target `"product-service"`), Spring would raise a bean name conflict without disambiguation. The `contextId` attribute gives each client a unique Spring bean name, allowing multiple Feign clients to the same upstream service to coexist in the same application context.
+</Info>
+
+---
+
+## Summary of Feign clients
+
+| Service | Interface | `contextId` | Endpoint |
+|---|---|---|---|
+| purchase-service | `SupplierClient` | `supplierClient` | `GET /supplier/{supplierId}/name` |
+| purchase-service | `ProductClient` | `productClientPurchase` | `GET /product/{productId}/name` |
+| inventory-service | `ProductClient` | `productClientInventory` | `GET /product/{productId}/name` |

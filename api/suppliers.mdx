@@ -1,0 +1,390 @@
+---
+title: "Suppliers API — vendor management endpoints"
+description: "REST endpoints for managing suppliers — the vendors who supply products to the inventory. Includes contact info, location, and status management."
+keywords: ["suppliers", "vendors", "inventory", "contact", "OpenFeign", "Spring Boot", "REST API"]
+---
+
+The Suppliers API manages the vendor records that back the product catalog. Every product must be linked to a supplier, so suppliers are a prerequisite resource. The service also exposes a lightweight name projection endpoint used internally by the purchase-service via OpenFeign for purchase order processing. The service runs on port **9090**, and all paths below are relative to `http://localhost:9090`.
+
+<Info>
+  The `GET /supplier/{supplierId}/name` endpoint is consumed internally by the purchase-service Feign client. Avoid changing its response shape without updating the corresponding Feign interface.
+</Info>
+
+---
+
+## Endpoints
+
+### GET /supplier
+
+List all suppliers with their full contact and location details.
+
+#### Response fields
+
+<ResponseField name="id" type="number">
+  Auto-generated supplier ID.
+</ResponseField>
+
+<ResponseField name="companyName" type="string">
+  Legal company name of the supplier (max 150 characters).
+</ResponseField>
+
+<ResponseField name="contactName" type="string">
+  Primary contact person at the supplier (max 100 characters).
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  Contact email address. Must be a valid email format.
+</ResponseField>
+
+<ResponseField name="phone" type="string">
+  Contact phone number.
+</ResponseField>
+
+<ResponseField name="address" type="string">
+  Street address of the supplier.
+</ResponseField>
+
+<ResponseField name="country" type="string">
+  Country where the supplier is located.
+</ResponseField>
+
+<ResponseField name="city" type="string">
+  City where the supplier is located.
+</ResponseField>
+
+<ResponseField name="status" type="boolean">
+  `true` if the supplier is active.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO-8601 timestamp of record creation. Read-only.
+</ResponseField>
+
+<ResponseField name="updateAt" type="string">
+  ISO-8601 timestamp of the last update. Read-only.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url "http://localhost:9090/supplier"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    [
+      {
+        "id": 1,
+        "companyName": "Tech Solutions Panama",
+        "contactName": "Carlos Mendoza",
+        "email": "carlos.mendoza@techsolutions.pa",
+        "phone": "+507-6123-4567",
+        "address": "Calle 50, Torre Global, Piso 12",
+        "country": "Panamá",
+        "city": "Ciudad de Panamá",
+        "status": true,
+        "createdAt": "2024-01-08T07:30:00",
+        "updateAt": null
+      },
+      {
+        "id": 2,
+        "companyName": "Distribuidora Regional CR",
+        "contactName": "Ana Rojas",
+        "email": "ana.rojas@distribuidora-cr.com",
+        "phone": "+506-2234-5678",
+        "address": "Avenida Central, Edificio Colón, Oficina 5",
+        "country": "Costa Rica",
+        "city": "San José",
+        "status": true,
+        "createdAt": "2024-01-08T07:45:00",
+        "updateAt": "2024-03-01T10:00:00"
+      }
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /supplier/\{supplierId\}
+
+Retrieve a single supplier by ID with full contact and location details.
+
+#### Path parameters
+
+<ParamField path="supplierId" type="number" required>
+  The ID of the supplier to retrieve.
+</ParamField>
+
+#### Response fields
+
+Same fields as [GET /supplier](#get-supplier).
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url "http://localhost:9090/supplier/1"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "id": 1,
+      "companyName": "Tech Solutions Panama",
+      "contactName": "Carlos Mendoza",
+      "email": "carlos.mendoza@techsolutions.pa",
+      "phone": "+507-6123-4567",
+      "address": "Calle 50, Torre Global, Piso 12",
+      "country": "Panamá",
+      "city": "Ciudad de Panamá",
+      "status": true,
+      "createdAt": "2024-01-08T07:30:00",
+      "updateAt": null
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /supplier/\{supplierId\}/name
+
+Return only the company name for a given supplier ID. This is a read-optimized projection endpoint—it returns a minimal payload to avoid transmitting full supplier records when only the name is needed.
+
+<Note>
+  This endpoint is called by the **purchase-service** via an OpenFeign client when building purchase order responses. It is part of the internal inter-service contract and should be treated as a stable API surface.
+</Note>
+
+#### Path parameters
+
+<ParamField path="supplierId" type="number" required>
+  The ID of the supplier.
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="companyName" type="string">
+  The supplier's company name.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request GET \
+      --url "http://localhost:9090/supplier/1/name"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "companyName": "Tech Solutions Panama"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /supplier
+
+Create a new supplier record.
+
+#### Request body
+
+<ParamField body="companyName" type="string" required>
+  Legal company name. Cannot be blank. Maximum 150 characters.
+</ParamField>
+
+<ParamField body="contactName" type="string" required>
+  Primary contact person name. Cannot be blank. Maximum 100 characters.
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  Contact email address. Must be a valid email format.
+</ParamField>
+
+<ParamField body="phone" type="string" required>
+  Contact phone number. Cannot be blank.
+</ParamField>
+
+<ParamField body="address" type="string" required>
+  Street address. Cannot be blank.
+</ParamField>
+
+<ParamField body="country" type="string" required>
+  Country of the supplier. Cannot be blank.
+</ParamField>
+
+<ParamField body="city" type="string" required>
+  City of the supplier. Cannot be blank.
+</ParamField>
+
+<ParamField body="status" type="boolean" required>
+  Set to `true` to mark the supplier as active.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request POST \
+      --url "http://localhost:9090/supplier" \
+      --header "Content-Type: application/json" \
+      --data '{
+        "companyName": "Electrónica del Pacífico S.A.",
+        "contactName": "María López",
+        "email": "mlopez@electronica-pacifico.com",
+        "phone": "+507-6789-0123",
+        "address": "Zona Libre de Colón, Edificio B, Local 34",
+        "country": "Panamá",
+        "city": "Colón",
+        "status": true
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 201
+    {
+      "id": 3,
+      "companyName": "Electrónica del Pacífico S.A.",
+      "contactName": "María López",
+      "email": "mlopez@electronica-pacifico.com",
+      "phone": "+507-6789-0123",
+      "address": "Zona Libre de Colón, Edificio B, Local 34",
+      "country": "Panamá",
+      "city": "Colón",
+      "status": true,
+      "createdAt": "2024-04-16T09:00:00",
+      "updateAt": null
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /supplier/\{supplierId\}
+
+Update an existing supplier by ID. The full supplier body must be provided; partial updates are not supported.
+
+#### Path parameters
+
+<ParamField path="supplierId" type="number" required>
+  The ID of the supplier to update.
+</ParamField>
+
+#### Request body
+
+Same fields as [POST /supplier](#post-supplier).
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request PUT \
+      --url "http://localhost:9090/supplier/3" \
+      --header "Content-Type: application/json" \
+      --data '{
+        "companyName": "Electrónica del Pacífico S.A.",
+        "contactName": "María López Ruiz",
+        "email": "mlopez@electronica-pacifico.com",
+        "phone": "+507-6789-0124",
+        "address": "Zona Libre de Colón, Edificio B, Local 34",
+        "country": "Panamá",
+        "city": "Colón",
+        "status": true
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json 200
+    {
+      "id": 3,
+      "companyName": "Electrónica del Pacífico S.A.",
+      "contactName": "María López Ruiz",
+      "email": "mlopez@electronica-pacifico.com",
+      "phone": "+507-6789-0124",
+      "address": "Zona Libre de Colón, Edificio B, Local 34",
+      "country": "Panamá",
+      "city": "Colón",
+      "status": true,
+      "createdAt": "2024-04-16T09:00:00",
+      "updateAt": "2024-04-16T14:00:00"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### DELETE /supplier/\{supplierId\}
+
+Delete a supplier by ID. Returns `204 No Content` on success.
+
+<Warning>
+  Deleting a supplier that is still linked to one or more products will cause a foreign key constraint error. Set `status: false` to deactivate the supplier and reassign or deactivate dependent products before deleting.
+</Warning>
+
+#### Path parameters
+
+<ParamField path="supplierId" type="number" required>
+  The ID of the supplier to delete.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash cURL
+    curl --request DELETE \
+      --url "http://localhost:9090/supplier/3"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```text 204
+    (no content)
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Error responses
+
+All errors are returned as an `ErrorDetails` JSON object.
+
+<ResponseField name="timestamp" type="string">
+  ISO-8601 timestamp of when the error occurred.
+</ResponseField>
+
+<ResponseField name="statusCode" type="number">
+  HTTP status code (e.g., `404`, `400`, `500`).
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable error message.
+</ResponseField>
+
+<ResponseField name="errorCode" type="string">
+  Machine-readable error code. One of `PRODUCT_NOT_FOUND`, `INVALID_REQUEST_DATA`, `VALIDATION_ERROR`, or `INTERNAL_SERVER_ERROR`.
+</ResponseField>
+
+<CodeGroup>
+
+```json 404 Not Found
+{
+  "timestamp": "2024-04-16T09:25:00",
+  "statusCode": 404,
+  "message": "Supplier not found with id: 999",
+  "errorCode": "PRODUCT_NOT_FOUND"
+}
+```
+
+```json 400 Validation Error
+{
+  "timestamp": "2024-04-16T09:26:00",
+  "statusCode": 400,
+  "message": "Incorrect E-mail Format",
+  "errorCode": "VALIDATION_ERROR"
+}
+```
+
+</CodeGroup>
